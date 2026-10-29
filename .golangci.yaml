@@ -1,0 +1,18 @@
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - gosec
+
+linters-settings:
+  gosec:
+    excludes:
+      - G304
+
+issues:
+  exclude-rules:
+    - path: "_test.go"
+      linters:
+        - gosec
+        - errcheck

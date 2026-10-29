@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL \
+            "https://github.com/golangci/golangci-lint/releases/download/v1.64.8/golangci-lint-1.64.8-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin \
+              --strip-components=1 \
+              "golangci-lint-1.64.8-linux-amd64/golangci-lint"
+
+      # ctlkit (module download) and the Autonomat contract (spec check) both
+      # live in private dotdevlabs repositories. SPEC_READ_TOKEN must be a
+      # token that can read dotdevlabs/ctlkit and dotdevlabs/autonomat.
+      - name: Git access to private modules
+        run: git config --global url."https://x-access-token:${SPEC_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+        env:
+          SPEC_READ_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
+
+      - name: Run bin/ci
+        run: bin/ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}

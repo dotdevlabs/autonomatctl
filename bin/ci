@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Full CI gate. CI runs exactly this on every pull request.
+#
+# The spec check needs read access to dotdevlabs/autonomat (private): set
+# GITHUB_TOKEN, or be logged in with `gh`. Without a token the check FAILS;
+# AUTONOMATCTL_ALLOW_SPEC_SKIP=1 skips it explicitly.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+export GONOSUMDB='github.com/dotdevlabs/*'
+export GOPRIVATE='github.com/dotdevlabs/*'
+
+COVERAGE_MIN=80
+
+echo "==> gofmt"
+GOFMT_OUT=$(gofmt -l .)
+if [ -n "$GOFMT_OUT" ]; then
+  echo "Files need formatting:"
+  echo "$GOFMT_OUT"
+  exit 1
+fi
+
+echo "==> spec sync check"
+./scripts/sync_spec.sh --check
+
+echo "==> go vet"
+go vet ./...
+
+echo "==> golangci-lint"
+golangci-lint run
+
+echo "==> go test"
+go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+echo "==> coverage gate"
+COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | tr -d '%')
+if awk "BEGIN {exit ($COVERAGE >= $COVERAGE_MIN) ? 0 : 1}"; then
+  echo "Coverage: ${COVERAGE}% (OK, minimum ${COVERAGE_MIN}%)"
+else
+  echo "Coverage: ${COVERAGE}% (FAIL - minimum ${COVERAGE_MIN}%)"
+  exit 1
+fi
+
+echo "==> go build"
+go build ./...
+
+echo "==> CI passed"

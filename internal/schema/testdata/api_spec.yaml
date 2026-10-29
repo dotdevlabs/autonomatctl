@@ -1,0 +1,3619 @@
+openapi: "3.0.3"
+info:
+  title: Autonomat API
+  version: "1.0.0"
+components:
+  securitySchemes:
+    apiToken:
+      type: http
+      scheme: bearer
+    webhookToken:
+      type: http
+      scheme: bearer
+  schemas:
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        source:
+          type: object
+          additionalProperties: false
+          properties:
+            pointer:
+              type: string
+    ErrorDocument:
+      type: object
+      additionalProperties: false
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorObject"
+    AccountAttributes:
+      type: object
+      additionalProperties: false
+      required: [name, worker_ingest_token_configured]
+      properties:
+        name:
+          type: string
+        worker_address:
+          type: string
+          nullable: true
+        worker_ingest_token_configured:
+          type: boolean
+        default_connection_id:
+          type: string
+          nullable: true
+    AccountResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [account]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/AccountAttributes"
+    AccountDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/AccountResource"
+    KeyMetric:
+      type: object
+      additionalProperties: false
+      required: [key, kind, field, money]
+      properties:
+        key:
+          type: string
+          description: Metric key, lowercase letters, digits and underscores, unique in the list.
+        kind:
+          type: string
+          description: Signal kind the readings come from (one of the signal kinds).
+        field:
+          type: string
+          description: Field in the reading's fields holding the value.
+        money:
+          type: boolean
+          description: True when the value is money (integer minor units plus a currency field).
+    HealthStandard:
+      type: object
+      additionalProperties: false
+      required: [value, method, statistic, min_products]
+      properties:
+        value:
+          type: number
+          description: Current portfolio standard growth rate in percent. A statistic method overwrites it daily.
+        method:
+          type: string
+          enum: [fixed, statistic]
+        statistic:
+          type: string
+          enum: [mean, median, min, max]
+        min_products:
+          type: integer
+          minimum: 1
+    HealthStateRule:
+      type: object
+      additionalProperties: false
+      required: [state, when]
+      properties:
+        state:
+          type: string
+          enum: [healthy, at_risk, unhealthy, unknown]
+        when:
+          type: string
+          enum: [any_missing, all_at_or_above, all_below, some_below]
+    HealthRulesAttributes:
+      type: object
+      additionalProperties: false
+      required: [window_days, key_metrics, standard, state_rules]
+      properties:
+        window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+        key_metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyMetric"
+        standard:
+          $ref: "#/components/schemas/HealthStandard"
+        state_rules:
+          type: array
+          description: Evaluated in order; the first matching rule sets the state, no match means unknown.
+          items:
+            $ref: "#/components/schemas/HealthStateRule"
+    HealthRulesResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [health-rules]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/HealthRulesAttributes"
+    HealthRulesDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/HealthRulesResource"
+    StatusDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/StatusResource"
+    StatusResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [status]
+        id:
+          type: string
+          enum: [current]
+        attributes:
+          $ref: "#/components/schemas/StatusAttributes"
+    StatusAttributes:
+      type: object
+      additionalProperties: false
+      required: [version, sha, db_version]
+      properties:
+        version:
+          type: string
+          nullable: true
+        sha:
+          type: string
+          nullable: true
+        db_version:
+          type: string
+          nullable: true
+    WorkItemAttributes:
+      type: object
+      additionalProperties: false
+      required: [item_type, title, source_kind, status]
+      properties:
+        item_type:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        source_kind:
+          type: string
+          description: >
+            Origin of the item. "human" means the item was created from an operator message
+            (operator message flow). "schedule" means the item was created automatically
+            by schedule execution (ScheduleTickWorker processing a schedule occurrence).
+        source_ref:
+          type: string
+          nullable: true
+          description: >
+            Stable reference identifying the item's origin. For schedule-sourced items
+            the format is "{schedule_key}:{occurrence_date}:{step_index}:{node_key}"
+            (e.g. "daily-ops:2026-09-24:0:node-alpha"). For human-sourced items the format
+            is "message:{operator_message_id}".
+        status:
+          type: string
+        dispatch_reason:
+          type: string
+          nullable: true
+        ref:
+          type: string
+          nullable: true
+          description: >
+            Stable work reference, unique per account. Backfilled from vault_task_key
+            where present; falls back to "#id" when absent.
+        intake_status:
+          type: string
+          nullable: true
+          description: >
+            Processing state for human-signal items: pending, no_work, failed, or confirmed.
+            Null for non-human-sourced items.
+        parent_id:
+          type: integer
+          nullable: true
+        merged_into_id:
+          type: integer
+          nullable: true
+        connection_id:
+          type: string
+          nullable: true
+        agent_role_id:
+          type: string
+          nullable: true
+        product_id:
+          type: integer
+          nullable: true
+        workable_type:
+          type: string
+          nullable: true
+        workable_id:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    WorkItemResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [work-items]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/WorkItemAttributes"
+    WorkItemDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/WorkItemResource"
+    WorkItemsDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemResource"
+    MoneyInput:
+      type: object
+      required: [amount_minor, currency]
+      properties:
+        amount_minor:
+          type: integer
+        currency:
+          type: string
+    CostConversionInput:
+      type: object
+      properties:
+        source_amount_minor:
+          type: integer
+        source_currency:
+          type: string
+        rate:
+          type: string
+    OutputInputAttributes:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        result:
+          type: object
+          nullable: true
+    ActionInputAttributes:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        target:
+          type: string
+        status:
+          type: string
+        started_at:
+          type: string
+          nullable: true
+        finished_at:
+          type: string
+          nullable: true
+        capability:
+          type: string
+          nullable: true
+        tool_id:
+          type: string
+          nullable: true
+        cost_unit:
+          type: string
+          nullable: true
+        cost_quantity:
+          type: integer
+          nullable: true
+        cost_estimate:
+          $ref: "#/components/schemas/MoneyInput"
+        cost_actual:
+          $ref: "#/components/schemas/MoneyInput"
+        cost_conversion:
+          $ref: "#/components/schemas/CostConversionInput"
+        cost_pending:
+          type: boolean
+          nullable: true
+        outputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutputInputAttributes"
+    ActionCostAttributes:
+      type: object
+      additionalProperties: false
+      required: [cost_actual]
+      properties:
+        cost_actual:
+          $ref: "#/components/schemas/MoneyInput"
+        cost_conversion:
+          $ref: "#/components/schemas/CostConversionInput"
+          nullable: true
+        external_ref:
+          type: string
+          nullable: true
+          description: "External reference identifying the source that measured this cost (e.g. a LoopControl task id)"
+    ActionCostUpdateDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [action-cost]
+            attributes:
+              $ref: "#/components/schemas/ActionCostAttributes"
+    ActionCostResultDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id]
+          properties:
+            type:
+              type: string
+            id:
+              type: string
+    ItemOutcomeInput:
+      type: object
+      properties:
+        state:
+          type: string
+        note:
+          type: string
+          nullable: true
+          description: >-
+            Why the run failed. For a run whose status is not finished or completed, the note is stored
+            as the execution's failure_reason (first reason wins, trimmed to 1000 characters) and shown
+            in the conversation ("The agent run failed: <note>", linked to the execution) and on the
+            execution page. Without a note an answer run shows the generic "The agent run failed."
+    CredentialRejectionInput:
+      type: object
+      properties:
+        reason:
+          type: string
+    RequestedActionInput:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [dispatch, steer, update_inbox_item, resolve_inbox_item]
+          description: >-
+            dispatch starts an existing work item and steer saves a steering instruction (answer runs only).
+            update_inbox_item sets the reason and evidence of a pending Inbox item; resolve_inbox_item resolves a
+            pending Inbox item that live evidence shows is already done. The two Inbox actions are available to any
+            run kind whose role is granted the capability of the same name (a capability with interface
+            `requested_action`, listed in the run payload `tool_definitions`).
+        work_item_id:
+          type: string
+          description: "Existing work item of this account. Required for dispatch; for steer give this or initiative_id."
+        initiative_id:
+          type: string
+          description: "Existing initiative of this account (steer only). Give exactly one of work_item_id or initiative_id."
+        instruction:
+          type: string
+          description: "Steering instruction text (steer only, required)."
+        inbox_item_id:
+          type: string
+          description: >-
+            Pending Inbox item of this account that belongs to the run's node: its product, its initiative,
+            or any item for the root (update_inbox_item and resolve_inbox_item, required).
+        reason:
+          type: string
+          description: "Why a person is needed for the item (update_inbox_item, required). Replaces the item's reason."
+        evidence:
+          type: string
+          description: >-
+            Evidence as text with a reference to each source (required). update_inbox_item replaces the item's
+            evidence; resolve_inbox_item records it on the resolution.
+    RunDeliveryAttributes:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        started_at:
+          type: string
+          nullable: true
+          description: >-
+            ISO 8601 time the agent started the run. When omitted, the earliest action start is used.
+            A recorded start is never overwritten.
+        finished_at:
+          type: string
+          nullable: true
+        usage:
+          type: object
+          nullable: true
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionInputAttributes"
+        item_outcome:
+          $ref: "#/components/schemas/ItemOutcomeInput"
+          nullable: true
+        credential_rejection:
+          $ref: "#/components/schemas/CredentialRejectionInput"
+          nullable: true
+        answer:
+          type: string
+          nullable: true
+          description: >-
+            The reply to the operator for an answer run (a run that replies to a conversation message
+            rather than doing work). Posted as one assistant message in the conversation. Ignored for
+            runs on work items. Used only when status is finished or completed; when the run failed
+            the failure note below is shown instead. Agent progress is never posted.
+        requested_actions:
+          type: array
+          nullable: true
+          maxItems: 5
+          description: >-
+            Actions a run asks the app to perform; honoured only for an answer or schedule run whose status
+            is finished or completed, ignored otherwise. Text in `answer` never dispatches, steers or
+            links anything. The app performs each action through its existing paths, records it as
+            activity, appends its outcome (done, already running, or blocked with the reason) to the one
+            assistant message, and links each touched work item as a work link card. A dispatch needs the
+            dispatch permission of the operator who asked and passes every dispatch gate; a steer is saved
+            received and becomes applied when a later run's payload is built. An invalid entry (unknown
+            type, unknown or cross-account target, blank instruction) rejects the whole delivery with 422
+            before anything is performed.
+
+            update_inbox_item and resolve_inbox_item (any answer or schedule run) are performed only when the
+            run's role was granted the capability of that name, the Inbox item is pending, and it belongs to
+            the run's node (its product, its initiative, or any item for the root). update_inbox_item sets
+            reason and evidence, keeps the previous values in the item's revision history and records an
+            activity event; resolve_inbox_item resolves through the existing Inbox resolution, recording the
+            evidence and the run, with an activity event. Nothing is deleted. Requested actions never fail the
+            result: an invalid entry of these types, and any entry of a schedule run, is skipped and reported as
+            JSON:API errors in `requested_action_errors` of the 200 response. A schedule run appends the outcomes
+            to its outcome.
+          items:
+            $ref: "#/components/schemas/RequestedActionInput"
+        external_refs:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              tool:
+                type: string
+              kind:
+                type: string
+              ref:
+                type: string
+              url:
+                type: string
+                nullable: true
+              label:
+                type: string
+                nullable: true
+    RunDeliveryDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type:
+              type: string
+              enum: [run-results]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunDeliveryAttributes"
+    SpendTotalEntry:
+      type: object
+      additionalProperties: false
+      required: [currency, amount_minor]
+      properties:
+        currency:
+          type: string
+        amount_minor:
+          type: integer
+    SpendCapabilityEntry:
+      type: object
+      additionalProperties: false
+      required: [capability, currency, amount_minor]
+      properties:
+        capability:
+          type: string
+          nullable: true
+        currency:
+          type: string
+        amount_minor:
+          type: integer
+    SpendCredentialEntry:
+      type: object
+      additionalProperties: false
+      required: [credential_id, currency, amount_minor]
+      properties:
+        credential_id:
+          type: string
+          nullable: true
+        currency:
+          type: string
+        amount_minor:
+          type: integer
+    SpendAttributes:
+      type: object
+      additionalProperties: false
+      required: [date, totals, by_capability, by_credential]
+      properties:
+        date:
+          type: string
+        totals:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpendTotalEntry"
+        by_capability:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpendCapabilityEntry"
+        by_credential:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpendCredentialEntry"
+    SpendResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [spend]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/SpendAttributes"
+    SpendDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/SpendResource"
+    ExecutionAttributes:
+      type: object
+      additionalProperties: false
+      required: [state, applied_correction_ids]
+      properties:
+        state:
+          type: string
+        agent_role_id:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          nullable: true
+        finished_at:
+          type: string
+          nullable: true
+        usage:
+          type: object
+        connection_id:
+          type: string
+          nullable: true
+        applied_correction_ids:
+          type: array
+          items:
+            type: integer
+          default: []
+        hatchet_run_id:
+          type: string
+          nullable: true
+        requested_action_errors:
+          type: array
+          description: >-
+            Webhook run result only: JSON:API errors (title and source pointer) for requested actions that were
+            rejected and skipped. Omitted when there are none.
+          items:
+            type: object
+            additionalProperties: false
+            required: [title, source]
+            properties:
+              title:
+                type: string
+              source:
+                type: object
+                additionalProperties: false
+                required: [pointer]
+                properties:
+                  pointer:
+                    type: string
+    ExecutionResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [executions]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/ExecutionAttributes"
+    ProductAttributes:
+      type: object
+      additionalProperties: false
+      required: [name, stage]
+      properties:
+        name:
+          type: string
+        key:
+          type: string
+          nullable: true
+        stage:
+          type: string
+          enum: [development, live, sunset]
+        first_dollar_in_at:
+          type: string
+          format: date-time
+          nullable: true
+    ProductDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type:
+              type: string
+              enum: [products]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/ProductAttributes"
+    ExecutionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ExecutionResource"
+    RunResultDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type:
+              type: string
+              enum: [run-results]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/ExecutionAttributes"
+    RunExecutionDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes]
+          properties:
+            type:
+              type: string
+              enum: [runs]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunExecutionAttributes"
+    RunExecutionAttributes:
+      type: object
+      additionalProperties: false
+      required: [account, item, assignment, callback]
+      properties:
+        account:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+        item:
+          type: object
+          additionalProperties: false
+          required: [id, type, title, status]
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+              description: >-
+                "answer" for an answer run (a reply to a conversation message; id is the execution id,
+                not a work item id). Work runs carry the work item type.
+            title:
+              type: string
+            body:
+              type: string
+              nullable: true
+            tags:
+              type: array
+              nullable: true
+              items:
+                type: string
+            status:
+              type: string
+            ref:
+              type: string
+              nullable: true
+            initiative_key:
+              type: string
+              nullable: true
+        assignment:
+          type: object
+          additionalProperties: false
+          required: [goal, granted_tools, rules]
+          properties:
+            goal:
+              type: string
+              description: >-
+                For an answer run: the instructions, the conversation's context record and its directly
+                related records, and the last 30 conversation messages as "Operator:" / "Assistant:"
+                lines, each truncated to 2000 characters. Return the reply in the delivery's answer
+                field. Role instructions, granted tools, rules and budget apply as for work runs.
+                For a schedule run: the step's procedure, the node, the node's Autonomat context as the
+                source of truth (no files or vault exist to read) and the results of earlier steps. A
+                product node's context holds purpose, stage, health and revenue, accepted documents
+                (each truncated to 4000 characters), initiatives with status, open and blocked work,
+                open Inbox items, and recent signals and activity (lists capped at 20). A root node's
+                context holds the strategy document and a summary of every product.
+            role_instructions:
+              type: string
+            granted_tools:
+              type: array
+              items:
+                type: string
+            rules:
+              type: string
+            assigned_role:
+              type: string
+              nullable: true
+            budget:
+              type: object
+              nullable: true
+              additionalProperties: false
+              required: [daily_spend, remaining, limits]
+              properties:
+                daily_spend:
+                  type: object
+                  additionalProperties: false
+                  required: [amount_minor, currency]
+                  properties:
+                    amount_minor:
+                      type: integer
+                    currency:
+                      type: string
+                remaining:
+                  type: object
+                  additionalProperties: false
+                  required: [amount_minor, currency]
+                  properties:
+                    amount_minor:
+                      type: integer
+                    currency:
+                      type: string
+                limits:
+                  type: array
+                  items:
+                    type: object
+            applied_correction_ids:
+              type: array
+              items:
+                type: integer
+        tool_definitions:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, description, interface, command, allowed_commands, invocation, input_schema]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+                description: The capability key.
+              description:
+                type: string
+              interface:
+                type: string
+                enum: [cli, http, builtin, requested_action, unknown]
+                description: How the tool is invoked. `http` is a read-only GET of a URL. `requested_action` is not run by the agent; it is asked for in the result's `requested_actions` (see RunDeliveryAttributes).
+              command:
+                type: string
+                nullable: true
+                description: The CLI command for a cli tool; null otherwise.
+              allowed_commands:
+                type: array
+                items:
+                  type: string
+                description: The only subcommands the agent may run (cli), `["GET"]` (http), or empty (builtin, requested_action).
+              invocation:
+                type: object
+                required: [kind]
+                properties:
+                  kind:
+                    type: string
+                    enum: [cli, http, builtin, requested_action]
+                    description: Always equal to `interface`.
+                description: Always carries `kind` (equal to `interface`). For http, includes optional `allowed_hosts` and `max_body_bytes` (response body cap).
+              input_schema:
+                type: object
+                required: [type, properties]
+                properties:
+                  type:
+                    type: string
+                    enum: [object]
+                  properties:
+                    type: object
+                description: A JSON Schema object (`type` object with a `properties` object). For cli, the `subcommand` (enum of allowed_commands) and `args`; for http, the `url`. A builtin capability is sent only when the agent contract defines it; otherwise it is left out with a run warning.
+              allowed:
+                type: array
+                items:
+                  type: string
+        model_credential:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [provider, kind, secret]
+          properties:
+            provider:
+              type: string
+            kind:
+              type: string
+            secret:
+              type: string
+            expires_at:
+              type: string
+              nullable: true
+            refresh_value:
+              type: string
+              nullable: true
+        callback:
+          type: object
+          additionalProperties: false
+          required: [url]
+          properties:
+            url:
+              type: string
+    ModelCredentialAttributes:
+      type: object
+      additionalProperties: false
+      required: [name, provider, credential_kind, state]
+      properties:
+        name:
+          type: string
+        provider:
+          type: string
+          description: "Provider identifier. Use 'claude-code' for Claude Code subscriptions (secret is raw claude setup-token output); use 'openai' for OpenAI Codex device auth (expires_at and refresh_value apply)."
+        credential_kind:
+          type: string
+          description: "Credential kind. Use 'subscription' with provider 'claude-code'; use 'codex_device_auth' with provider 'openai'. Legacy value 'claude_subscription_token' is accepted for backward compatibility."
+        secret_hint:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          nullable: true
+        state:
+          type: string
+        last_error:
+          type: string
+          nullable: true
+        last_used_at:
+          type: string
+          nullable: true
+    ModelCredentialResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [model-credentials]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/ModelCredentialAttributes"
+    ModelCredentialDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ModelCredentialResource"
+    ModelCredentialsDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelCredentialResource"
+    CapabilityAttributes:
+      type: object
+      additionalProperties: false
+      required: [key, invocation]
+      properties:
+        key:
+          type: string
+        description:
+          type: string
+          nullable: true
+        invocation:
+          type: object
+        inputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityInputDefinition"
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    CapabilityInputDefinition:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        required:
+          type: boolean
+        enum:
+          type: array
+        properties:
+          type: object
+        items:
+          type: object
+    CapabilityResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [capabilities]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/CapabilityAttributes"
+    CapabilityDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/CapabilityResource"
+    CapabilitiesDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityResource"
+    AgentRoleAttributes:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+        instructions:
+          type: string
+          nullable: true
+        key:
+          type: string
+          nullable: true
+        capability_ids:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    AgentRoleResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [agent-roles]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/AgentRoleAttributes"
+    AgentRoleDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/AgentRoleResource"
+    AgentRolesDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentRoleResource"
+    OperatorMessageAttributes:
+      type: object
+      additionalProperties: false
+      required: [body, created_at, instruction_status]
+      properties:
+        body:
+          type: string
+        work_item_id:
+          type: integer
+          nullable: true
+        execution_id:
+          type: integer
+          nullable: true
+        received_at:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        correction_scope:
+          type: string
+          nullable: true
+        correction_node_key:
+          type: string
+          nullable: true
+        correction_intent:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        evidence:
+          type: string
+          nullable: true
+        response_kind:
+          type: string
+          nullable: true
+        fix_reference:
+          type: string
+          nullable: true
+        instruction_status:
+          type: string
+        supersedes_id:
+          type: integer
+          nullable: true
+        verified_by_execution_id:
+          type: integer
+          nullable: true
+    OperatorMessageResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [operator_messages]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/OperatorMessageAttributes"
+    OperatorMessagesDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorMessageResource"
+    OperatorMessageDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/OperatorMessageResource"
+    OperatorMessageCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [body]
+      properties:
+        body:
+          type: string
+          description: >
+            The operator message text. This is the only writable field accepted via the API;
+            all other metadata (corrections, instruction status, etc.) is managed server-side.
+    OperatorMessageCreateDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes]
+          properties:
+            type:
+              type: string
+              enum: [operator_messages]
+            attributes:
+              $ref: "#/components/schemas/OperatorMessageCreateAttributes"
+    ControlRequestAttributes:
+      type: object
+      additionalProperties: false
+      required: [kind, state, created_at]
+      properties:
+        kind:
+          type: string
+          enum: [interrupt, pause, stop, resume]
+        state:
+          type: string
+          enum: [queued, received, acknowledged, applied, failed, superseded]
+        work_item_id:
+          type: integer
+          nullable: true
+        execution_id:
+          type: integer
+          nullable: true
+        acknowledged_at:
+          type: string
+          nullable: true
+        received_at:
+          type: string
+          nullable: true
+        applied_at:
+          type: string
+          nullable: true
+        failed_at:
+          type: string
+          nullable: true
+        failure_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+    ControlRequestResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [control_requests]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/ControlRequestAttributes"
+    ControlRequestsDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ControlRequestResource"
+    ControlRequestDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ControlRequestResource"
+    AcknowledgementAttributes:
+      type: object
+      additionalProperties: false
+      properties:
+        result:
+          type: string
+          enum: [applied, failed]
+          nullable: true
+        failure_reason:
+          type: string
+          nullable: true
+    AcknowledgementResource:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [acknowledgements]
+        attributes:
+          $ref: "#/components/schemas/AcknowledgementAttributes"
+    AcknowledgementDocument:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AcknowledgementResource"
+paths:
+  /account:
+    get:
+      summary: Get current account details
+      operationId: getAccount
+      security:
+        - apiToken: []
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+        - id: wrong_token_kind
+          status: 401
+          auth: webhookTokenAsApi
+      responses:
+        "200":
+          description: Account document
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AccountDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update account name and worker settings
+      operationId: updateAccount
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    attributes:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        worker_address:
+                          type: string
+                          nullable: true
+                        worker_ingest_token:
+                          type: string
+                          nullable: true
+                        default_connection_id:
+                          type: string
+                          nullable: true
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                name: Acme Corp
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body:
+            data:
+              attributes:
+                name: Acme Corp
+        - id: wrong_token_kind
+          status: 401
+          auth: webhookTokenAsApi
+          body:
+            data:
+              attributes:
+                name: Acme Corp
+        - id: other_account_isolation
+          status: 200
+          auth: otherCorpToken
+          body:
+            data:
+              attributes:
+                name: Other Corp
+        - id: validation_failure
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                name: ""
+      responses:
+        "200":
+          description: Updated account document
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AccountDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation failed
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /health_rules:
+    get:
+      summary: Get the account's product health rule
+      description: >
+        The key metrics new products start with, the trailing window, the portfolio standard
+        growth rate and the ordered state rules. All of it is account data.
+      operationId: getHealthRules
+      security:
+        - apiToken: []
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+        - id: wrong_token_kind
+          status: 401
+          auth: webhookTokenAsApi
+      responses:
+        "200":
+          description: Health rules document
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/HealthRulesDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update the account's product health rule
+      description: >
+        Omitted attributes are left unchanged. Lists (key_metrics, state_rules) replace the
+        stored list. Invalid input returns 422 and changes nothing.
+      operationId: updateHealthRules
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    attributes:
+                      type: object
+                      properties:
+                        window_days:
+                          type: integer
+                          minimum: 1
+                          maximum: 365
+                        key_metrics:
+                          type: array
+                          items:
+                            $ref: "#/components/schemas/KeyMetric"
+                        standard:
+                          type: object
+                          properties:
+                            value:
+                              type: number
+                            method:
+                              type: string
+                              enum: [fixed, statistic]
+                            statistic:
+                              type: string
+                              enum: [mean, median, min, max]
+                            min_products:
+                              type: integer
+                              minimum: 1
+                        state_rules:
+                          type: array
+                          items:
+                            $ref: "#/components/schemas/HealthStateRule"
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                window_days: 14
+                standard:
+                  value: 2.5
+                  method: fixed
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body:
+            data:
+              attributes:
+                window_days: 14
+        - id: wrong_token_kind
+          status: 401
+          auth: webhookTokenAsApi
+          body:
+            data:
+              attributes:
+                window_days: 14
+        - id: other_account_isolation
+          status: 200
+          auth: otherCorpToken
+          body:
+            data:
+              attributes:
+                window_days: 7
+        - id: validation_failure
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                window_days: 0
+      responses:
+        "200":
+          description: Updated health rules document
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/HealthRulesDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation failed
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /spend:
+    get:
+      summary: Daily spend rollup by current node
+      operationId: getSpend
+      security:
+        - apiToken: []
+      parameters:
+        - name: current_node
+          in: query
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: invalid_date
+          status: 422
+          auth: apiToken
+          query:
+            date: "not-a-date"
+      responses:
+        "200":
+          description: Spend document
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/SpendDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid parameters
+  /status:
+    get:
+      summary: Deploy status
+      operationId: getStatus
+      x-scenarios:
+        - id: success
+          status: 200
+          auth: none
+      responses:
+        "200":
+          description: Current deploy status
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/StatusDocument"
+  /work_items:
+    get:
+      summary: List work items
+      operationId: listWorkItems
+      security:
+        - apiToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            Filter query supporting typed qualifiers.
+            Example: `status:open product:myproduct since:2026-10-01 sort:updated-desc`
+            Unknown qualifiers return 422.
+          schema:
+            type: string
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: invalid_qualifier
+          status: 422
+          auth: apiToken
+          query:
+            q: "badqualifier:x"
+      responses:
+        "200":
+          description: Work item collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkItemsDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid query qualifier
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a work item
+      operationId: createWorkItem
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/WorkItemDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body:
+            data:
+              type: work-items
+              attributes:
+                item_type: report
+                title: Contract Test Item
+                source_kind: human
+                status: open
+                product_id: "~fixture:products:alpha_product"
+                workable_type: Initiative
+                workable_id: "~fixture:initiatives:acme_initiative"
+        - id: unauthorized
+          status: 401
+          auth: none
+          body:
+            data:
+              attributes: {}
+        - id: validation_error
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes: {}
+      responses:
+        "201":
+          description: Work item created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkItemDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+  /work_items/{id}:
+    get:
+      summary: Get a work item with history
+      operationId: getWorkItem
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:work_items:report_one"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            id: "~fixture:work_items:report_one"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:work_items:report_one"
+      responses:
+        "200":
+          description: Work item resource with history in meta
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkItemDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /work_items/{work_item_id}/executions:
+    post:
+      summary: Create an execution for a work item
+      operationId: createExecution
+      security:
+        - apiToken: []
+      parameters:
+        - name: work_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/ExecutionDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          params:
+            work_item_id: "~fixture:work_items:report_one"
+          body:
+            data:
+              attributes:
+                status: pending
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            work_item_id: "1"
+          body: {}
+        - id: item_not_found
+          status: 404
+          auth: apiToken
+          params:
+            work_item_id: "0"
+          body:
+            data:
+              attributes:
+                status: pending
+      responses:
+        "201":
+          description: Execution created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ExecutionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Work item not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /products/{product_id}/sunset:
+    post:
+      summary: Sunset a product (operator action; there is no way back)
+      operationId: sunsetProduct
+      security:
+        - apiToken: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: sunset_development
+          status: 200
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: sunset_live
+          status: 200
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:live_product"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            product_id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: already_sunset
+          status: 422
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:sunset_product"
+      responses:
+        "200":
+          description: The product, now in the sunset stage
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ProductDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Product not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The product is already sunset
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /executions/{id}:
+    get:
+      summary: Get an execution with actions and outputs
+      operationId: getExecution
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:executions:run_one"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            id: "~fixture:executions:run_one"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:executions:run_one"
+      responses:
+        "200":
+          description: Execution resource with actions in meta
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ExecutionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /runs/{run_id}/execution:
+    get:
+      summary: Get the dispatch execution payload for a run
+      operationId: getRunExecution
+      security:
+        - apiToken: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+          params:
+            run_id: "~fixture:executions:run_for_execution"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            run_id: "~fixture:executions:run_for_execution"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            run_id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            run_id: "~fixture:executions:run_for_execution"
+        - id: dispatch_blocked
+          status: 409
+          auth: apiToken
+          params:
+            run_id: "~fixture:executions:run_queued"
+        - id: initiative_dispatch_paused
+          status: 409
+          auth: apiToken
+          params:
+            run_id: "~fixture:executions:run_initiative_paused_queued"
+      responses:
+        "200":
+          description: Run execution payload
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunExecutionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "409":
+          description: Dispatch blocked by active pause or stop control
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /webhooks/agent:
+    post:
+      summary: Deliver agent run results
+      operationId: deliverAgentRunResults
+      security:
+        - webhookToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunDeliveryDocument"
+      x-scenarios:
+        - id: accepted
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_one"
+              attributes:
+                status: completed
+        - id: answer_delivered
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_answer"
+              attributes:
+                status: finished
+                answer: "The portfolio is on track."
+        - id: answer_failed_with_note
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_answer"
+              attributes:
+                status: failed
+                item_outcome:
+                  note: "execution_fetch_failed: invalid_response: Missing required field: manual"
+        - id: answer_with_dispatch_action
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_answer"
+              attributes:
+                status: finished
+                answer: "Done."
+                requested_actions:
+                  - type: dispatch
+                    work_item_id: "~fixture:work_items:report_one"
+        - id: answer_with_steer_action
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_answer"
+              attributes:
+                status: finished
+                answer: "Done."
+                requested_actions:
+                  - type: steer
+                    initiative_id: "~fixture:initiatives:alpha_initiative"
+                    instruction: "Hold new work until Friday."
+        - id: schedule_update_inbox_item
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_schedule"
+              attributes:
+                status: finished
+                answer: "Reviewed."
+                requested_actions:
+                  - type: update_inbox_item
+                    inbox_item_id: "~fixture:inbox_items:setup_item_one"
+                    reason: "A worker address must be set before runs can be dispatched."
+                    evidence: "Account settings show no worker address (https://example.com/settings/account_details)."
+        - id: schedule_resolve_inbox_item
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_schedule"
+              attributes:
+                status: finished
+                requested_actions:
+                  - type: resolve_inbox_item
+                    inbox_item_id: "~fixture:inbox_items:setup_item_one"
+                    evidence: "Worker address is now set (https://example.com/settings/account_details)."
+        - id: schedule_requested_action_rejected
+          status: 200
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_schedule"
+              attributes:
+                status: finished
+                requested_actions:
+                  - type: resolve_inbox_item
+                    inbox_item_id: "0"
+                    evidence: "Not an item."
+        - id: answer_action_unknown_work_item
+          status: 422
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_answer"
+              attributes:
+                status: finished
+                answer: "Done."
+                requested_actions:
+                  - type: dispatch
+                    work_item_id: "0"
+        - id: answer_action_invalid_type
+          status: 422
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_answer"
+              attributes:
+                status: finished
+                answer: "Done."
+                requested_actions:
+                  - type: delete
+        - id: unauthorized
+          status: 401
+          auth: none
+          body: {}
+        - id: not_found
+          status: 404
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "0"
+              attributes:
+                status: completed
+        - id: wrong_token_kind
+          status: 401
+          auth: apiTokenAsWebhook
+          body: {}
+        - id: validation_error
+          status: 422
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_one"
+              attributes: {}
+        - id: run_not_dispatched
+          status: 422
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_queued"
+              attributes:
+                status: completed
+      responses:
+        "200":
+          description: Run result accepted
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunResultDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Run not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /model_credentials:
+    get:
+      summary: List model credentials for the caller's account
+      operationId: listModelCredentials
+      security:
+        - apiToken: []
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: none
+      responses:
+        "200":
+          description: Model credentials collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ModelCredentialsDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a model credential
+      operationId: createModelCredential
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    attributes:
+                      type: object
+                      required: [name, provider, credential_kind, secret]
+                      properties:
+                        name:
+                          type: string
+                        provider:
+                          type: string
+                          description: "Use 'claude-code' for Claude Code subscriptions; 'openai' for OpenAI Codex device auth."
+                        credential_kind:
+                          type: string
+                          description: "Use 'subscription' with provider 'claude-code'; 'codex_device_auth' with provider 'openai'."
+                        secret:
+                          type: string
+                          description: "For claude-code/subscription: paste the raw output of 'claude setup-token'. No JSON extraction required."
+                        refresh_value:
+                          type: string
+                          nullable: true
+                        expires_at:
+                          type: string
+                          nullable: true
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                name: Test Claude Credential
+                provider: claude-code
+                credential_kind: subscription
+                secret: raw-setup-token-value
+        - id: unauthorized
+          status: 401
+          auth: none
+          body:
+            data:
+              attributes: {}
+        - id: validation_error
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                name: ""
+      responses:
+        "201":
+          description: Model credential created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ModelCredentialDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /model_credentials/{id}:
+    get:
+      summary: Get a model credential
+      operationId: getModelCredential
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:connections:claude_cred"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:connections:claude_cred"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+      responses:
+        "200":
+          description: Model credential resource
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ModelCredentialDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update a model credential
+      operationId: updateModelCredential
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    attributes:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        provider:
+                          type: string
+                        credential_kind:
+                          type: string
+                        secret:
+                          type: string
+                          nullable: true
+                        refresh_value:
+                          type: string
+                          nullable: true
+                        expires_at:
+                          type: string
+                          nullable: true
+      x-scenarios:
+        - id: updated
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:connections:claude_cred"
+          body:
+            data:
+              attributes:
+                name: Updated Name
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:connections:claude_cred"
+          body:
+            data:
+              attributes: {}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body:
+            data:
+              attributes:
+                name: Updated Name
+      responses:
+        "200":
+          description: Model credential updated
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ModelCredentialDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Delete a model credential
+      operationId: deleteModelCredential
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: deleted
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:connections:rejected_cred"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:connections:rejected_cred"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+      responses:
+        "204":
+          description: Credential deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /capabilities:
+    get:
+      summary: List capabilities for the caller's account
+      operationId: listCapabilities
+      security:
+        - apiToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            Filter query supporting typed qualifiers.
+            Example: `interface:cli since:2026-10-01 sort:key-asc`
+            Unknown qualifiers return 422.
+          schema:
+            type: string
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: invalid_qualifier
+          status: 422
+          auth: apiToken
+          query:
+            q: "badqualifier:x"
+      responses:
+        "200":
+          description: Capabilities collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/CapabilitiesDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid query qualifier
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a capability
+      operationId: createCapability
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/CapabilityDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body:
+            data:
+              type: capabilities
+              attributes:
+                key: test-tool
+                invocation:
+                  method: http
+                  url: https://example.com
+                inputs:
+                  - name: query
+                    type: string
+                    required: true
+        - id: unauthorized
+          status: 401
+          auth: none
+          body:
+            data:
+              attributes: {}
+        - id: validation_error
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes: {}
+        - id: validation_error_malformed_inputs
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                key: bad-tool
+                invocation:
+                  method: http
+                inputs:
+                  - type: string
+      responses:
+        "201":
+          description: Capability created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/CapabilityDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+  /capabilities/{id}:
+    get:
+      summary: Get a capability
+      operationId: getCapability
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:capabilities:tool_one"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+      responses:
+        "200":
+          description: Capability resource
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/CapabilityDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update a capability
+      operationId: updateCapability
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/CapabilityDocument"
+      x-scenarios:
+        - id: updated
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              type: capabilities
+              attributes:
+                key: updated-tool
+                invocation:
+                  method: http
+                  url: https://example.com
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              attributes: {}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body:
+            data:
+              attributes:
+                key: updated-tool
+                invocation:
+                  method: http
+      responses:
+        "200":
+          description: Capability updated
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/CapabilityDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    put:
+      summary: Replace a capability (full update)
+      operationId: replaceCapability
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/CapabilityDocument"
+      x-scenarios:
+        - id: replaced
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              type: capabilities
+              attributes:
+                key: replaced-tool
+                invocation:
+                  method: http
+                  url: https://example.com
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              attributes: {}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body:
+            data:
+              attributes:
+                key: replaced-tool
+                invocation:
+                  method: http
+      responses:
+        "200":
+          description: Capability replaced
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/CapabilityDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Delete a capability
+      operationId: deleteCapability
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: deleted
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_to_delete"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:capabilities:tool_to_delete"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+      responses:
+        "204":
+          description: Capability deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /agent_roles:
+    get:
+      summary: List agent roles for the caller's account
+      operationId: listAgentRoles
+      security:
+        - apiToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            Filter query supporting typed qualifiers.
+            Example: `sort:title-asc since:2026-10-01`
+            Unknown qualifiers return 422.
+          schema:
+            type: string
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: invalid_qualifier
+          status: 422
+          auth: apiToken
+          query:
+            q: "badqualifier:x"
+      responses:
+        "200":
+          description: Agent roles collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AgentRolesDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid query qualifier
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create an agent role
+      operationId: createAgentRole
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/AgentRoleDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body:
+            data:
+              type: agent-roles
+              attributes:
+                title: test-agent
+                key: test-agent-key
+        - id: unauthorized
+          status: 401
+          auth: none
+          body:
+            data:
+              attributes: {}
+        - id: validation_error
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes: {}
+      responses:
+        "201":
+          description: Agent role created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AgentRoleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+  /agent_roles/{id}:
+    get:
+      summary: Get an agent role
+      operationId: getAgentRole
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:agent_roles:agent_one"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:agent_roles:agent_one"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:agent_roles:agent_one"
+      responses:
+        "200":
+          description: Agent role resource
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AgentRoleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update an agent role (including capability selection)
+      operationId: updateAgentRole
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/AgentRoleDocument"
+      x-scenarios:
+        - id: updated
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:agent_roles:agent_one"
+          body:
+            data:
+              type: agent-roles
+              attributes:
+                title: updated-agent
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:agent_roles:agent_one"
+          body:
+            data:
+              attributes: {}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body:
+            data:
+              attributes:
+                title: updated-agent
+      responses:
+        "200":
+          description: Agent role updated
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AgentRoleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    put:
+      summary: Replace an agent role (full update, including capability selection)
+      operationId: replaceAgentRole
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/AgentRoleDocument"
+      x-scenarios:
+        - id: replaced
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:agent_roles:agent_one"
+          body:
+            data:
+              type: agent-roles
+              attributes:
+                title: replaced-agent
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:agent_roles:agent_one"
+          body:
+            data:
+              attributes: {}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body:
+            data:
+              attributes:
+                title: replaced-agent
+      responses:
+        "200":
+          description: Agent role replaced
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/AgentRoleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Delete an agent role
+      operationId: deleteAgentRole
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: deleted
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:agent_roles:agent_to_delete"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:agent_roles:agent_to_delete"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+      responses:
+        "204":
+          description: Agent role deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /operator_messages:
+    get:
+      summary: List operator messages for the account (worker polling)
+      operationId: listOperatorMessages
+      security:
+        - apiToken: []
+      parameters:
+        - name: after_id
+          in: query
+          required: false
+          schema:
+            type: integer
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: none
+      responses:
+        "200":
+          description: Operator messages list
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/OperatorMessagesDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create an operator message; unscoped messages trigger autonomous dispatch
+      operationId: createOperatorMessage
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/OperatorMessageCreateDocument"
+      x-scenarios:
+        - id: create_unscoped
+          status: 201
+          auth: apiToken
+          body:
+            data:
+              type: operator_messages
+              attributes:
+                body: "Run the daily health check."
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body:
+            data:
+              type: operator_messages
+              attributes:
+                body: "Run the daily health check."
+        - id: validation_error
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              type: operator_messages
+              attributes:
+                body: ""
+      responses:
+        "201":
+          description: Operator message created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/OperatorMessageDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /control_requests:
+    get:
+      summary: List pending control requests for the account (worker polling)
+      operationId: listControlRequests
+      security:
+        - apiToken: []
+      parameters:
+        - name: after_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: cross_account
+          status: 200
+          auth: otherCorpToken
+        - id: unauthorized
+          status: 401
+          auth: none
+      responses:
+        "200":
+          description: Control requests list
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ControlRequestsDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /control_requests/{control_request_id}/acknowledgement:
+    post:
+      summary: Acknowledge a control request (worker confirms receipt)
+      operationId: acknowledgeControlRequest
+      security:
+        - apiToken: []
+      parameters:
+        - name: control_request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/AcknowledgementDocument"
+      x-scenarios:
+        - id: acknowledged
+          status: 200
+          auth: apiToken
+          params:
+            control_request_id: "~fixture:control_requests:control_to_ack"
+          body:
+            data:
+              type: acknowledgements
+              attributes: {}
+        - id: applied
+          status: 200
+          auth: apiToken
+          params:
+            control_request_id: "~fixture:control_requests:control_to_apply"
+          body:
+            data:
+              type: acknowledgements
+              attributes:
+                result: applied
+        - id: failed
+          status: 200
+          auth: apiToken
+          params:
+            control_request_id: "~fixture:control_requests:control_to_fail"
+          body:
+            data:
+              type: acknowledgements
+              attributes:
+                result: failed
+                failure_reason: "Unsupported control kind"
+        - id: duplicate_applied
+          status: 200
+          auth: apiToken
+          params:
+            control_request_id: "~fixture:control_requests:control_applied"
+          body:
+            data:
+              type: acknowledgements
+              attributes:
+                result: applied
+        - id: cross_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            control_request_id: "~fixture:control_requests:control_to_ack"
+          body:
+            data:
+              type: acknowledgements
+              attributes: {}
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            control_request_id: "~fixture:control_requests:control_to_ack"
+          body:
+            data:
+              type: acknowledgements
+              attributes: {}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            control_request_id: "0"
+          body:
+            data:
+              type: acknowledgements
+              attributes: {}
+      responses:
+        "200":
+          description: Control request acknowledged
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ControlRequestDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /control_requests/{control_request_id}/receipt:
+    post:
+      summary: Confirm durable receipt of a control request
+      operationId: receiveControlRequest
+      security:
+        - apiToken: []
+      parameters:
+        - name: control_request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: received
+          status: 200
+          auth: apiToken
+          params:
+            control_request_id: "~fixture:control_requests:control_to_receive"
+        - id: cross_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            control_request_id: "~fixture:control_requests:control_to_receive"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            control_request_id: "~fixture:control_requests:control_to_receive"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            control_request_id: "0"
+      responses:
+        "200":
+          description: Control request receipt confirmed
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ControlRequestDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /operator_messages/{operator_message_id}/receipt:
+    post:
+      summary: Confirm durable receipt of an operator message
+      operationId: receiveOperatorMessage
+      security:
+        - apiToken: []
+      parameters:
+        - name: operator_message_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: received
+          status: 200
+          auth: apiToken
+          params:
+            operator_message_id: "~fixture:operator_messages:message_to_receive"
+        - id: cross_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            operator_message_id: "~fixture:operator_messages:message_to_receive"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            operator_message_id: "~fixture:operator_messages:message_to_receive"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            operator_message_id: "0"
+      responses:
+        "200":
+          description: Operator message receipt confirmed
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/OperatorMessageDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /webhooks/execution_actions/{id}:
+    patch:
+      summary: Record late actual cost for an execution action
+      operationId: recordActionCost
+      security:
+        - webhookToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/ActionCostUpdateDocument"
+      x-scenarios:
+        - id: accepted
+          status: 200
+          auth: webhookToken
+          params:
+            id: "action-ext-cost-test"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual:
+                  amount_minor: 500
+                  currency: USD
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "action-ext-cost-test"
+          body: {}
+        - id: not_found
+          status: 404
+          auth: webhookToken
+          params:
+            id: "nonexistent-action-xyz"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual:
+                  amount_minor: 500
+                  currency: USD
+        - id: wrong_token_kind
+          status: 401
+          auth: apiTokenAsWebhook
+          params:
+            id: "action-ext-cost-test"
+          body: {}
+        - id: validation_error
+          status: 422
+          auth: webhookToken
+          params:
+            id: "action-ext-cost-test"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual:
+                  amount_minor: 1.5
+                  currency: USD
+      responses:
+        "200":
+          description: Late cost recorded
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ActionCostResultDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Action not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    put:
+      summary: Record late actual cost for an execution action (PUT alias)
+      operationId: recordActionCostPut
+      security:
+        - webhookToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/ActionCostUpdateDocument"
+      x-scenarios:
+        - id: accepted
+          status: 200
+          auth: webhookToken
+          params:
+            id: "action-ext-cost-test"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual:
+                  amount_minor: 500
+                  currency: USD
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "action-ext-cost-test"
+          body: {}
+        - id: not_found
+          status: 404
+          auth: webhookToken
+          params:
+            id: "nonexistent-action-xyz"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual:
+                  amount_minor: 500
+                  currency: USD
+        - id: wrong_token_kind
+          status: 401
+          auth: apiTokenAsWebhook
+          params:
+            id: "action-ext-cost-test"
+          body: {}
+        - id: validation_error
+          status: 422
+          auth: webhookToken
+          params:
+            id: "action-ext-cost-test"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual:
+                  amount_minor: 1.5
+                  currency: USD
+      responses:
+        "200":
+          description: Late cost recorded
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ActionCostResultDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Action not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
