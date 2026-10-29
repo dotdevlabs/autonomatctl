@@ -28,8 +28,11 @@ func TestPinnedFiles(t *testing.T) {
 	if err != nil || !bytes.Equal(raw, Raw()) {
 		t.Errorf("embedded spec differs from the file on disk (%v)", err)
 	}
-	if Version() == "" {
-		t.Error("empty contract version")
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(Version()) {
+		t.Errorf("contract version %q is not a semantic version", Version())
+	}
+	if Version() != "1.2.0" {
+		t.Errorf("contract version = %q, want 1.2.0", Version())
 	}
 	sp, err := Spec()
 	if err != nil || len(sp.Operations) == 0 {
