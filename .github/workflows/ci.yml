@@ -24,15 +24,22 @@ jobs:
               --strip-components=1 \
               "golangci-lint-1.64.8-linux-amd64/golangci-lint"
 
-      # ctlkit (module download) and the Autonomat contract (spec check) both
-      # live in private dotdevlabs repositories. SPEC_READ_TOKEN must be a
-      # token that can read dotdevlabs/ctlkit and dotdevlabs/autonomat.
-      - name: Git access to private modules
-        run: git config --global url."https://x-access-token:${SPEC_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+      # The Autonomat contract (spec check) lives in a private repository.
+      # With the SPEC_READ_TOKEN secret (a token that can read
+      # dotdevlabs/autonomat and dotdevlabs/ctlkit) the check is strict.
+      # Without it the check is skipped explicitly and loudly; it still runs
+      # strictly wherever a token is available (locally, release).
+      - name: Configure private access
         env:
           SPEC_READ_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
+        run: |
+          if [ -n "$SPEC_READ_TOKEN" ]; then
+            git config --global url."https://x-access-token:${SPEC_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            echo "GITHUB_TOKEN=$SPEC_READ_TOKEN" >> "$GITHUB_ENV"
+          else
+            echo "::warning::SPEC_READ_TOKEN is not configured; skipping the live spec drift check"
+            echo "AUTONOMATCTL_ALLOW_SPEC_SKIP=1" >> "$GITHUB_ENV"
+          fi
 
-      - name: Run bin/ci
+      - name: Run CI gate
         run: bin/ci
-        env:
-          GITHUB_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
