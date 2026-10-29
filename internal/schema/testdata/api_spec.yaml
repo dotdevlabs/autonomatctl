@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "1.0.0"
+  version: "1.2.0"
 components:
   securitySchemes:
     apiToken:
@@ -11,6 +11,32 @@ components:
       type: http
       scheme: bearer
   schemas:
+    JsonValue:
+      description: Any JSON value (string, number, boolean, array or object), used for free-form maps.
+      nullable: true
+      oneOf:
+        - type: string
+        - type: number
+        - type: boolean
+        - type: array
+          items:
+            $ref: "#/components/schemas/JsonValue"
+        - type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+    BudgetLimit:
+      type: object
+      additionalProperties: false
+      required: [level, amount_minor, currency]
+      description: A daily spend limit. Reserved; the budget `limits` array is currently always empty.
+      properties:
+        level:
+          type: string
+          enum: [initiative, product, account]
+        amount_minor:
+          type: integer
+        currency:
+          type: string
     ErrorObject:
       type: object
       additionalProperties: false
@@ -22,6 +48,12 @@ components:
           additionalProperties: false
           properties:
             pointer:
+              type: string
+        meta:
+          type: object
+          additionalProperties: false
+          properties:
+            operation_id:
               type: string
     ErrorDocument:
       type: object
@@ -48,6 +80,7 @@ components:
           nullable: true
     AccountResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -59,6 +92,7 @@ components:
           $ref: "#/components/schemas/AccountAttributes"
     AccountDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -130,6 +164,7 @@ components:
             $ref: "#/components/schemas/HealthStateRule"
     HealthRulesResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -141,18 +176,21 @@ components:
           $ref: "#/components/schemas/HealthRulesAttributes"
     HealthRulesDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/HealthRulesResource"
     StatusDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/StatusResource"
     StatusResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -251,6 +289,7 @@ components:
           type: string
     WorkItemResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -260,14 +299,18 @@ components:
           type: string
         attributes:
           $ref: "#/components/schemas/WorkItemAttributes"
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
     WorkItemDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/WorkItemResource"
     WorkItemsDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -276,6 +319,7 @@ components:
             $ref: "#/components/schemas/WorkItemResource"
     MoneyInput:
       type: object
+      additionalProperties: false
       required: [amount_minor, currency]
       properties:
         amount_minor:
@@ -284,6 +328,7 @@ components:
           type: string
     CostConversionInput:
       type: object
+      additionalProperties: false
       properties:
         source_amount_minor:
           type: integer
@@ -293,6 +338,7 @@ components:
           type: string
     OutputInputAttributes:
       type: object
+      additionalProperties: false
       required: [kind]
       properties:
         kind:
@@ -303,8 +349,12 @@ components:
         result:
           type: object
           nullable: true
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+          description: Free-form result map reported by the agent; stored as sent (empty map when omitted).
     ActionInputAttributes:
       type: object
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -361,10 +411,12 @@ components:
           description: "External reference identifying the source that measured this cost (e.g. a LoopControl task id)"
     ActionCostUpdateDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           type: object
+          additionalProperties: false
           properties:
             type:
               type: string
@@ -387,6 +439,7 @@ components:
               type: string
     ItemOutcomeInput:
       type: object
+      additionalProperties: false
       properties:
         state:
           type: string
@@ -400,6 +453,7 @@ components:
             execution page. Without a note an answer run shows the generic "The agent run failed."
     CredentialRejectionInput:
       type: object
+      additionalProperties: false
       properties:
         reason:
           type: string
@@ -441,6 +495,7 @@ components:
             evidence; resolve_inbox_item records it on the resolution.
     RunDeliveryAttributes:
       type: object
+      additionalProperties: false
       required: [status]
       properties:
         status:
@@ -457,6 +512,9 @@ components:
         usage:
           type: object
           nullable: true
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+          description: Free-form usage metrics. Accepted for backward compatibility and not stored.
         actions:
           type: array
           items:
@@ -522,10 +580,12 @@ components:
                 nullable: true
     RunDeliveryDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           type: object
+          additionalProperties: false
           required: [type, id, attributes]
           properties:
             type:
@@ -589,6 +649,7 @@ components:
             $ref: "#/components/schemas/SpendCredentialEntry"
     SpendResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -600,6 +661,7 @@ components:
           $ref: "#/components/schemas/SpendAttributes"
     SpendDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -607,7 +669,7 @@ components:
     ExecutionAttributes:
       type: object
       additionalProperties: false
-      required: [state, applied_correction_ids]
+      required: [state]
       properties:
         state:
           type: string
@@ -622,6 +684,9 @@ components:
           nullable: true
         usage:
           type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+          description: Free-form usage metrics reported by the agent (empty map when none).
         connection_id:
           type: string
           nullable: true
@@ -654,6 +719,7 @@ components:
                     type: string
     ExecutionResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -682,10 +748,12 @@ components:
           nullable: true
     ProductDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           type: object
+          additionalProperties: false
           required: [type, id, attributes]
           properties:
             type:
@@ -695,18 +763,75 @@ components:
               type: string
             attributes:
               $ref: "#/components/schemas/ProductAttributes"
+    ExecutionOutputSummary:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        result:
+          type: object
+          nullable: true
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+    ExecutionActionSummary:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, outputs]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        target:
+          type: string
+          nullable: true
+        status:
+          type: string
+        capability_id:
+          type: string
+          nullable: true
+        failure_reason:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          nullable: true
+        finished_at:
+          type: string
+          nullable: true
+        outputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionOutputSummary"
     ExecutionDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/ExecutionResource"
+        meta:
+          type: object
+          additionalProperties: false
+          description: Present on GET /executions/{id}; the run's actions in id order.
+          properties:
+            actions:
+              type: array
+              items:
+                $ref: "#/components/schemas/ExecutionActionSummary"
     RunResultDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           type: object
+          additionalProperties: false
           required: [type, id, attributes]
           properties:
             type:
@@ -832,8 +957,9 @@ components:
                       type: string
                 limits:
                   type: array
+                  description: Reserved. Always an empty array today; the daily limits are checked by the dispatch gate.
                   items:
-                    type: object
+                    $ref: "#/components/schemas/BudgetLimit"
             applied_correction_ids:
               type: array
               items:
@@ -868,15 +994,36 @@ components:
                 description: The only subcommands the agent may run (cli), `["GET"]` (http), or empty (builtin, requested_action).
               invocation:
                 type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
                 required: [kind]
                 properties:
                   kind:
                     type: string
                     enum: [cli, http, builtin, requested_action]
                     description: Always equal to `interface`.
+                  command:
+                    type: string
+                  reference:
+                    type: string
+                  method:
+                    type: string
+                  url:
+                    type: string
+                  allowed:
+                    type: array
+                    items:
+                      type: string
+                  allowed_hosts:
+                    type: array
+                    items:
+                      type: string
+                  max_body_bytes:
+                    type: integer
                 description: Always carries `kind` (equal to `interface`). For http, includes optional `allowed_hosts` and `max_body_bytes` (response body cap).
               input_schema:
                 type: object
+                additionalProperties: false
                 required: [type, properties]
                 properties:
                   type:
@@ -884,11 +1031,50 @@ components:
                     enum: [object]
                   properties:
                     type: object
+                    description: One JSON Schema property per tool input, keyed by input name.
+                    additionalProperties:
+                      $ref: "#/components/schemas/CapabilityInputDefinition"
                 description: A JSON Schema object (`type` object with a `properties` object). For cli, the `subcommand` (enum of allowed_commands) and `args`; for http, the `url`. A builtin capability is sent only when the agent contract defines it; otherwise it is left out with a run warning.
               allowed:
                 type: array
                 items:
                   type: string
+              approval_required:
+                type: boolean
+                description: >-
+                  True when a policy (`requires: approval`) gates calls of this tool. The agent must not run a gated
+                  call; it submits the exact call with `POST /pending_calls` (operationId `createPendingCall`) and
+                  an operator decides in the Inbox. Always false in an `approved_call` run.
+              governing_policy:
+                type: string
+                nullable: true
+                description: The key of the policy that gates this tool; null when `approval_required` is false.
+              approval_subcommands:
+                type: array
+                items:
+                  type: string
+                description: The subcommands or operations that need approval; empty when every call of the tool does (or when not gated).
+        approved_call:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [inbox_item_id, capability, arguments]
+          description: >-
+            Present only in a run of kind `approved_call`, which Autonomat dispatches once when an operator approves
+            a submitted call. The run performs exactly this call and nothing else, then reports the result as its
+            answer; the result is recorded on the Inbox item. An approved call is never retried.
+          properties:
+            inbox_item_id:
+              type: string
+              description: The approved Inbox item (a call is executed at most once per item).
+            capability:
+              type: string
+              description: The capability key to call.
+            arguments:
+              type: object
+              description: The exact arguments the run submitted and the operator approved.
+              additionalProperties:
+                $ref: "#/components/schemas/JsonValue"
         model_credential:
           type: object
           nullable: true
@@ -907,6 +1093,24 @@ components:
             refresh_value:
               type: string
               nullable: true
+        api_token:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [token, expires_at]
+          description: >-
+            A short-lived API token bound to this run (`Authorization: Bearer <token>`). It expires at
+            `expires_at` or when the run reaches a terminal state, whichever is first. The run may call only
+            the operations a capability granted to its role lists by operationId (for example the allowed
+            subcommands of a CLI capability), and only on records inside its node. A denied request
+            returns 403 naming the operation. Each fetch of this document issues a new token and revokes the
+            earlier one. Absent for a run that is already terminal.
+          properties:
+            token:
+              type: string
+            expires_at:
+              type: string
+              format: date-time
         callback:
           type: object
           additionalProperties: false
@@ -914,6 +1118,336 @@ components:
           properties:
             url:
               type: string
+    ResourceLinks:
+      type: object
+      additionalProperties: false
+      required: [self]
+      properties:
+        self:
+          type: string
+    RunInboxItemAttributes:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        title:
+          type: string
+          nullable: true
+        status:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        evidence:
+          type: string
+          nullable: true
+    RunInboxItemDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes, links]
+          properties:
+            type:
+              type: string
+              enum: [inbox-items]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunInboxItemAttributes"
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+    RunInboxItemUpdateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [inbox-items]
+            attributes:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                evidence:
+                  type: string
+    RunInboxResolutionAttributes:
+      type: object
+      additionalProperties: false
+      required: [inbox_item_id, outcome]
+      properties:
+        inbox_item_id:
+          type: integer
+        outcome:
+          type: string
+        evidence:
+          type: string
+          nullable: true
+        execution_id:
+          type: integer
+          nullable: true
+    RunInboxResolutionDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes, links]
+          properties:
+            type:
+              type: string
+              enum: [inbox-item-resolutions]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunInboxResolutionAttributes"
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+    RunInboxResolutionCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [inbox-item-resolutions]
+            attributes:
+              type: object
+              additionalProperties: false
+              properties:
+                evidence:
+                  type: string
+    PendingCallCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [pending-calls]
+            attributes:
+              type: object
+              additionalProperties: false
+              properties:
+                capability:
+                  type: string
+                  description: The capability key (required).
+                arguments:
+                  type: object
+                  description: The exact arguments of the call, for a cli capability including its `subcommand` (required).
+                  additionalProperties:
+                    $ref: "#/components/schemas/JsonValue"
+                reason:
+                  type: string
+                  description: Why the call is needed (required); shown to the operator.
+    PendingCallAttributes:
+      type: object
+      additionalProperties: false
+      required: [inbox_item_id, status, capability, governing_policy]
+      properties:
+        inbox_item_id:
+          type: integer
+        status:
+          type: string
+          description: The Inbox item status, `pending` until an operator decides.
+        capability:
+          type: string
+        governing_policy:
+          type: string
+          description: The key of the policy that requires approval.
+    PendingCallDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes, links]
+          properties:
+            type:
+              type: string
+              enum: [pending-calls]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/PendingCallAttributes"
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+    RunDispatchAttributes:
+      type: object
+      additionalProperties: false
+      required: [state, work_item_id]
+      properties:
+        state:
+          type: string
+        work_item_id:
+          type: integer
+    RunDispatchDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes, links]
+          properties:
+            type:
+              type: string
+              enum: [executions]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunDispatchAttributes"
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+    RunDispatchCreateDocument:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          properties:
+            type:
+              type: string
+    RunSteeringAttributes:
+      type: object
+      additionalProperties: false
+      required: [instruction, scope, status]
+      properties:
+        instruction:
+          type: string
+        scope:
+          type: string
+        status:
+          type: string
+        work_item_id:
+          type: integer
+          nullable: true
+        initiative_id:
+          type: integer
+          nullable: true
+    RunSteeringDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes, links]
+          properties:
+            type:
+              type: string
+              enum: [steering-instructions]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunSteeringAttributes"
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+    RunSteeringCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [steering-instructions]
+            attributes:
+              type: object
+              additionalProperties: false
+              properties:
+                instruction:
+                  type: string
+    RunRevisionAttributes:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        revision_number:
+          type: integer
+          nullable: true
+        state:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        document_id:
+          type: integer
+          nullable: true
+        standard_id:
+          type: integer
+          nullable: true
+    RunRevisionDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes, links]
+          properties:
+            type:
+              type: string
+              enum: [document-revisions]
+            id:
+              type: string
+            attributes:
+              $ref: "#/components/schemas/RunRevisionAttributes"
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+    RunRevisionCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [document-revisions]
+            attributes:
+              type: object
+              additionalProperties: false
+              properties:
+                body:
+                  type: string
+                summary:
+                  type: string
     ModelCredentialAttributes:
       type: object
       additionalProperties: false
@@ -943,6 +1477,7 @@ components:
           nullable: true
     ModelCredentialResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -954,12 +1489,14 @@ components:
           $ref: "#/components/schemas/ModelCredentialAttributes"
     ModelCredentialDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/ModelCredentialResource"
     ModelCredentialsDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -978,6 +1515,28 @@ components:
           nullable: true
         invocation:
           type: object
+          description: Operator-supplied invocation settings. The listed keys are interpreted by the application; any other key is kept as sent.
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+          properties:
+          command:
+            type: string
+          reference:
+            type: string
+          method:
+            type: string
+          url:
+            type: string
+          allowed:
+            type: array
+            items:
+              type: string
+          allowed_hosts:
+            type: array
+            items:
+              type: string
+          max_body_bytes:
+            type: integer
         inputs:
           type: array
           items:
@@ -988,6 +1547,9 @@ components:
           type: string
     CapabilityInputDefinition:
       type: object
+      description: A JSON Schema fragment describing one tool input. Further JSON Schema keywords are accepted and preserved.
+      additionalProperties:
+        $ref: "#/components/schemas/JsonValue"
       required: [name, type]
       properties:
         name:
@@ -997,15 +1559,24 @@ components:
         description:
           type: string
         required:
-          type: boolean
+          oneOf:
+            - type: boolean
+            - type: array
+              items:
+                type: string
         enum:
           type: array
+          items:
+            $ref: "#/components/schemas/JsonValue"
         properties:
           type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CapabilityInputDefinition"
         items:
-          type: object
+          $ref: "#/components/schemas/CapabilityInputDefinition"
     CapabilityResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -1017,12 +1588,14 @@ components:
           $ref: "#/components/schemas/CapabilityAttributes"
     CapabilityDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/CapabilityResource"
     CapabilitiesDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -1052,6 +1625,7 @@ components:
           type: string
     AgentRoleResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -1063,12 +1637,14 @@ components:
           $ref: "#/components/schemas/AgentRoleAttributes"
     AgentRoleDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           $ref: "#/components/schemas/AgentRoleResource"
     AgentRolesDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -1078,7 +1654,7 @@ components:
     OperatorMessageAttributes:
       type: object
       additionalProperties: false
-      required: [body, created_at, instruction_status]
+      required: [body, created_at]
       properties:
         body:
           type: string
@@ -1116,6 +1692,8 @@ components:
           nullable: true
         instruction_status:
           type: string
+          nullable: true
+          description: Null for plain conversation messages; omitted by the receipt response.
         supersedes_id:
           type: integer
           nullable: true
@@ -1124,6 +1702,7 @@ components:
           nullable: true
     OperatorMessageResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -1135,6 +1714,7 @@ components:
           $ref: "#/components/schemas/OperatorMessageAttributes"
     OperatorMessagesDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -1143,6 +1723,7 @@ components:
             $ref: "#/components/schemas/OperatorMessageResource"
     OperatorMessageDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -1159,10 +1740,12 @@ components:
             all other metadata (corrections, instruction status, etc.) is managed server-side.
     OperatorMessageCreateDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
           type: object
+          additionalProperties: false
           required: [type, attributes]
           properties:
             type:
@@ -1206,6 +1789,7 @@ components:
           type: string
     ControlRequestResource:
       type: object
+      additionalProperties: false
       required: [type, id, attributes]
       properties:
         type:
@@ -1217,6 +1801,7 @@ components:
           $ref: "#/components/schemas/ControlRequestAttributes"
     ControlRequestsDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -1225,6 +1810,7 @@ components:
             $ref: "#/components/schemas/ControlRequestResource"
     ControlRequestDocument:
       type: object
+      additionalProperties: false
       required: [data]
       properties:
         data:
@@ -1242,6 +1828,7 @@ components:
           nullable: true
     AcknowledgementResource:
       type: object
+      additionalProperties: false
       properties:
         type:
           type: string
@@ -1250,6 +1837,7 @@ components:
           $ref: "#/components/schemas/AcknowledgementAttributes"
     AcknowledgementDocument:
       type: object
+      additionalProperties: false
       properties:
         data:
           $ref: "#/components/schemas/AcknowledgementResource"
@@ -1294,12 +1882,15 @@ paths:
           application/vnd.api+json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 data:
                   type: object
+                  additionalProperties: false
                   properties:
                     attributes:
                       type: object
+                      additionalProperties: false
                       properties:
                         name:
                           type: string
@@ -1413,12 +2004,15 @@ paths:
           application/vnd.api+json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 data:
                   type: object
+                  additionalProperties: false
                   properties:
                     attributes:
                       type: object
+                      additionalProperties: false
                       properties:
                         window_days:
                           type: integer
@@ -1430,6 +2024,7 @@ paths:
                             $ref: "#/components/schemas/KeyMetric"
                         standard:
                           type: object
+                          additionalProperties: false
                           properties:
                             value:
                               type: number
@@ -1546,6 +2141,10 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Invalid parameters
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /status:
     get:
       summary: Deploy status
@@ -1619,6 +2218,14 @@ paths:
           application/vnd.api+json:
             schema:
               $ref: "#/components/schemas/WorkItemDocument"
+      x-run-targets:
+        - model: Product
+          in: body
+          key: product_id
+        - type_key: workable_type
+          models: [Initiative, Refinement]
+          in: body
+          key: workable_id
       x-scenarios:
         - id: created
           status: 201
@@ -1634,9 +2241,39 @@ paths:
                 product_id: "~fixture:products:alpha_product"
                 workable_type: Initiative
                 workable_id: "~fixture:initiatives:acme_initiative"
+        - id: run_created
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "work-items", "attributes": {"item_type": "report", "title": "Run created item", "product_id": "~fixture:products:alpha_product", "workable_type": "Initiative", "workable_id": "~fixture:initiatives:acme_initiative"}}}
         - id: unauthorized
           status: 401
           auth: none
+          body:
+            data:
+              attributes: {}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          body: {"data": {"type": "work-items", "attributes": {"item_type": "report", "title": "Run created item", "product_id": "~fixture:products:alpha_product", "workable_type": "Initiative", "workable_id": "~fixture:initiatives:acme_initiative"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "work-items", "attributes": {"item_type": "report", "title": "Run created item", "product_id": "~fixture:products:alpha_product", "workable_type": "Initiative", "workable_id": "~fixture:initiatives:acme_initiative"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          body: {"data": {"type": "work-items", "attributes": {"item_type": "report", "title": "Outside", "product_id": "~fixture:products:alpha_product", "workable_type": "Initiative", "workable_id": "~fixture:initiatives:alpha_initiative"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          body: {"data": {"type": "work-items", "attributes": {"item_type": "report", "title": "Missing", "product_id": "~fixture:products:alpha_product", "workable_type": "Initiative", "workable_id": "0"}}}
+        - id: unsupported_workable
+          status: 422
+          auth: runToken
+          body: {"data": {"type": "work-items", "attributes": {"item_type": "report", "title": "Bad type", "product_id": "~fixture:products:alpha_product", "workable_type": "Product", "workable_id": "~fixture:initiatives:acme_initiative"}}}
+        - id: run_invalid_input
+          status: 422
+          auth: runToken
           body:
             data:
               attributes: {}
@@ -1659,8 +2296,24 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or a record outside the run's node (run token)
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Product or workable not found (run token)
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /work_items/{id}:
     get:
       summary: Get a work item with history
@@ -1756,6 +2409,22 @@ paths:
             data:
               attributes:
                 status: pending
+        - id: engine_unavailable
+          status: 503
+          auth: apiToken
+          stub: hatchetUnavailable
+          params:
+            work_item_id: "~fixture:work_items:report_one"
+          body:
+            data:
+              attributes:
+                status: pending
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            work_item_id: "~fixture:work_items:report_one"
       responses:
         "201":
           description: Execution created
@@ -1771,6 +2440,18 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Work item not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "503":
+          description: Execution engine unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
@@ -1839,6 +2520,806 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: The product is already sunset
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /inbox_items/{id}:
+    patch:
+      summary: Update a pending Inbox item's reason and evidence (run token)
+      operationId: updateInboxItem
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunInboxItemUpdateDocument"
+      x-run-targets:
+        - model: InboxItem
+          in: path
+          key: id
+      x-scenarios:
+        - id: granted
+          status: 200
+          auth: runToken
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            id: "0"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Why a person is needed", "evidence": "Checked the live state"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {}}}
+      responses:
+        "200":
+          description: The updated Inbox item
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunInboxItemDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /inbox_items/{inbox_item_id}/resolution:
+    post:
+      summary: Resolve a pending Inbox item with evidence (run token)
+      operationId: createInboxItemResolution
+      security:
+        - apiToken: []
+      parameters:
+        - name: inbox_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunInboxResolutionCreateDocument"
+      x-run-targets:
+        - model: InboxItem
+          in: path
+          key: inbox_item_id
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            inbox_item_id: "0"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {"evidence": "Verified against live data"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-item-resolutions", "attributes": {}}}
+      responses:
+        "201":
+          description: The resolution, recording the evidence and the run
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunInboxResolutionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /pending_calls:
+    post:
+      summary: Submit a tool call for operator approval instead of running it (run token)
+      description: >-
+        Files a pending approval Inbox item that holds the governing policy, the exact call (capability and
+        arguments), the run and its node. Nothing runs. Approving the item dispatches one new execution of kind
+        `approved_call` that performs exactly this call and records the result on the item; denying it never runs
+        the call. Authorized by the capability named in the body: it must be granted to the run. Submitting the
+        same call twice returns the same item.
+      operationId: createPendingCall
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/PendingCallCreateDocument"
+      x-run-capability:
+        in: body
+        key: capability
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "deploy", "args": ["--prod"]}, "reason": "Release approved by the roadmap"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "deploy"}, "reason": "Release"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "deploy"}, "reason": "Release"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "deploy"}, "reason": "Release"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "deploy"}, "reason": "Release"}}}
+        - id: missing_capability
+          status: 422
+          auth: runToken
+          body: {"data": {"type": "pending-calls", "attributes": {"arguments": {}, "reason": "Release"}}}
+        - id: blank_reason
+          status: 422
+          auth: runToken
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "deploy"}, "reason": ""}}}
+        - id: no_policy
+          status: 422
+          auth: runToken
+          body: {"data": {"type": "pending-calls", "attributes": {"capability": "gated-cli", "arguments": {"subcommand": "status"}, "reason": "Check"}}}
+        - id: malformed_json
+          status: 422
+          auth: runToken
+          raw_body: "{not json"
+      responses:
+        "201":
+          description: The pending call, filed as a pending approval Inbox item
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: The capability is not granted to the run, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input, a subcommand the capability does not allow, or no policy requires approval for the call
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /work_items/{work_item_id}/dispatch:
+    post:
+      summary: Dispatch a work item (run token)
+      operationId: dispatchWorkItem
+      security:
+        - apiToken: []
+      parameters:
+        - name: work_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: WorkItem
+          in: path
+          key: work_item_id
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          setup: dispatchAllowed
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            work_item_id: "~fixture:work_items:report_one"
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            work_item_id: "0"
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            work_item_id: "~fixture:work_items:report_one"
+      responses:
+        "201":
+          description: The queued run
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunDispatchDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /work_items/{work_item_id}/steering:
+    post:
+      summary: Steer a work item with a standing instruction (run token)
+      operationId: createWorkItemSteering
+      security:
+        - apiToken: []
+      parameters:
+        - name: work_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunSteeringCreateDocument"
+      x-run-targets:
+        - model: WorkItem
+          in: path
+          key: work_item_id
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            work_item_id: "~fixture:work_items:report_one"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            work_item_id: "0"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Keep the diff small"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
+          body: {"data": {"type": "steering-instructions", "attributes": {}}}
+      responses:
+        "201":
+          description: The saved steering instruction
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunSteeringDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /initiatives/{initiative_id}/steering:
+    post:
+      summary: Steer an initiative with a standing instruction (run token)
+      operationId: createInitiativeSteering
+      security:
+        - apiToken: []
+      parameters:
+        - name: initiative_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunSteeringCreateDocument"
+      x-run-targets:
+        - model: Initiative
+          in: path
+          key: initiative_id
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          params:
+            initiative_id: "~fixture:initiatives:acme_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            initiative_id: "~fixture:initiatives:acme_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            initiative_id: "~fixture:initiatives:acme_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            initiative_id: "~fixture:initiatives:acme_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            initiative_id: "~fixture:initiatives:acme_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            initiative_id: "~fixture:initiatives:alpha_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            initiative_id: "0"
+          body: {"data": {"type": "steering-instructions", "attributes": {"instruction": "Prefer small steps"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            initiative_id: "~fixture:initiatives:acme_initiative"
+          body: {"data": {"type": "steering-instructions", "attributes": {}}}
+      responses:
+        "201":
+          description: The saved steering instruction
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunSteeringDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /products/{product_id}/documents/{document_id}/revisions:
+    post:
+      summary: Propose a revision of a product document (run token)
+      operationId: createProductDocumentRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunRevisionCreateDocument"
+      x-run-targets:
+        - model: Product
+          in: path
+          key: product_id
+        - model: ProductDocument
+          in: path
+          key: document_id
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            product_id: "~fixture:products:live_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "0"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "# PRD\nRevised", "summary": "Clarify scope"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+          body: {"data": {"type": "document-revisions", "attributes": {}}}
+      responses:
+        "201":
+          description: The proposed revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunRevisionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /standards/{standard_id}/revisions:
+    post:
+      summary: Propose a revision of a standard (run token)
+      operationId: createStandardRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: standard_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunRevisionCreateDocument"
+      x-run-targets:
+        - model: Standard
+          in: path
+          key: standard_id
+      x-scenarios:
+        - id: granted
+          status: 201
+          auth: runToken
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: account_token
+          status: 403
+          auth: apiToken
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          params:
+            standard_id: "0"
+          body: {"data": {"type": "document-revisions", "attributes": {"body": "Use HTTPS everywhere", "summary": "Tighten wording"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          params:
+            standard_id: "~fixture:standards:acme_standard"
+          body: {"data": {"type": "document-revisions", "attributes": {}}}
+      responses:
+        "201":
+          description: The proposed revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunRevisionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, record outside the run's node, or a run token is required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
           content:
             application/vnd.api+json:
               schema:
@@ -1938,6 +3419,12 @@ paths:
           auth: apiToken
           params:
             run_id: "~fixture:executions:run_initiative_paused_queued"
+        - id: credential_not_usable
+          status: 422
+          auth: apiToken
+          prepare: rejectedDefaultCredential
+          params:
+            run_id: "~fixture:executions:run_for_execution"
       responses:
         "200":
           description: Run execution payload
@@ -1959,6 +3446,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "409":
           description: Dispatch blocked by active pause or stop control
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Run cannot be dispatched (unusable credential, budget or policy)
           content:
             application/vnd.api+json:
               schema:
@@ -2195,12 +3688,15 @@ paths:
           application/vnd.api+json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 data:
                   type: object
+                  additionalProperties: false
                   properties:
                     attributes:
                       type: object
+                      additionalProperties: false
                       required: [name, provider, credential_kind, secret]
                       properties:
                         name:
@@ -2327,12 +3823,15 @@ paths:
           application/vnd.api+json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 data:
                   type: object
+                  additionalProperties: false
                   properties:
                     attributes:
                       type: object
+                      additionalProperties: false
                       properties:
                         name:
                           type: string
@@ -2376,6 +3875,15 @@ paths:
             data:
               attributes:
                 name: Updated Name
+        - id: invalid_update
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:connections:claude_cred"
+          body:
+            data:
+              attributes:
+                name: ""
       responses:
         "200":
           description: Model credential updated
@@ -2391,6 +3899,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
           content:
             application/vnd.api+json:
               schema:
@@ -2422,6 +3936,12 @@ paths:
           auth: apiToken
           params:
             id: "0"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            id: "~fixture:connections:claude_cred"
       responses:
         "204":
           description: Credential deleted
@@ -2433,6 +3953,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
@@ -2549,6 +4075,10 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /capabilities/{id}:
     get:
       summary: Get a capability
@@ -2651,6 +4181,15 @@ paths:
                 key: updated-tool
                 invocation:
                   method: http
+        - id: invalid_update
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              attributes:
+                key: ""
       responses:
         "200":
           description: Capability updated
@@ -2666,6 +4205,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
           content:
             application/vnd.api+json:
               schema:
@@ -2720,6 +4265,15 @@ paths:
                 key: replaced-tool
                 invocation:
                   method: http
+        - id: invalid_update
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              attributes:
+                key: ""
       responses:
         "200":
           description: Capability replaced
@@ -2735,6 +4289,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
           content:
             application/vnd.api+json:
               schema:
@@ -2766,6 +4326,12 @@ paths:
           auth: apiToken
           params:
             id: "0"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            id: "~fixture:capabilities:tool_one"
       responses:
         "204":
           description: Capability deleted
@@ -2777,6 +4343,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
@@ -2876,6 +4448,10 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Validation error
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /agent_roles/{id}:
     get:
       summary: Get an agent role
@@ -2973,6 +4549,15 @@ paths:
             data:
               attributes:
                 title: updated-agent
+        - id: invalid_update
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:agent_roles:agent_one"
+          body:
+            data:
+              attributes:
+                title: ""
       responses:
         "200":
           description: Agent role updated
@@ -2988,6 +4573,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
           content:
             application/vnd.api+json:
               schema:
@@ -3037,6 +4628,15 @@ paths:
             data:
               attributes:
                 title: replaced-agent
+        - id: invalid_update
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:agent_roles:agent_one"
+          body:
+            data:
+              attributes:
+                title: ""
       responses:
         "200":
           description: Agent role replaced
@@ -3052,6 +4652,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Validation error
           content:
             application/vnd.api+json:
               schema:
@@ -3083,6 +4689,12 @@ paths:
           auth: apiToken
           params:
             id: "0"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            id: "~fixture:agent_roles:agent_one"
       responses:
         "204":
           description: Agent role deleted
@@ -3094,6 +4706,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
@@ -3311,6 +4929,12 @@ paths:
             data:
               type: acknowledgements
               attributes: {}
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            control_request_id: "~fixture:control_requests:control_to_ack"
       responses:
         "200":
           description: Control request acknowledged
@@ -3326,6 +4950,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
@@ -3363,6 +4993,12 @@ paths:
           auth: apiToken
           params:
             control_request_id: "0"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            control_request_id: "~fixture:control_requests:control_to_receive"
       responses:
         "200":
           description: Control request receipt confirmed
@@ -3378,6 +5014,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
@@ -3415,6 +5057,12 @@ paths:
           auth: apiToken
           params:
             operator_message_id: "0"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+          params:
+            operator_message_id: "~fixture:operator_messages:message_to_receive"
       responses:
         "200":
           description: Operator message receipt confirmed
@@ -3430,6 +5078,12 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
           content:
             application/vnd.api+json:
               schema:
