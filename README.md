@@ -26,6 +26,8 @@ the contract's exact field names (`--item_type`, not `--item-type`) and query pa
 fields can be sent: there is no free-form body. Required attributes are enforced before any request.
 Destructive operations (`delete`, `products sunset`) need `--yes`. Operations that authenticate with the
 webhook token are hidden from `--help` and omitted from the `ai` reference, but remain callable.
+Every generated command carries `operation_id`, `method` and `path` cobra annotations, which `ai --json` exposes
+under each command's `annotations`; required request fields are required flags (`required: true` in the reference).
 
 ### Output and exit codes
 
