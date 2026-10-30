@@ -55,10 +55,13 @@ type Param struct {
 type Body struct {
 	ContentType string
 	DataType    string // enum value of data.type, empty when undocumented
-	HasID       bool   // data.id is documented
-	IDRequired  bool
-	Fields      []Field // data.attributes properties, in contract order
-	Required    bool
+	// Linkage marks a relationship request whose data is an array of resource
+	// identifiers of DataType.
+	Linkage    bool
+	HasID      bool // data.id is documented
+	IDRequired bool
+	Fields     []Field // data.attributes properties, in contract order
+	Required   bool
 }
 
 // Field is one documented attribute.
@@ -75,10 +78,58 @@ type Field struct {
 	HasDefault bool
 }
 
+// dedupeKeys removes repeated mapping keys, keeping the last definition as
+// most YAML parsers do; yaml.v3 would otherwise reject the document. The
+// contract repeats some response and link schemas under components, which
+// generate no flags. A repeat among the paths or their methods could hide an
+// operation, so the top-level paths mapping and its path items (strict > 0
+// levels) reject repeats instead.
+func dedupeKeys(n *yaml.Node, strict int, root bool) error {
+	if n.Kind == yaml.MappingNode {
+		last := map[string]int{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			last[n.Content[i].Value] = i
+		}
+		kept := make([]*yaml.Node, 0, len(n.Content))
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if last[n.Content[i].Value] != i {
+				if strict > 0 {
+					return fmt.Errorf("duplicate key %q", n.Content[i].Value)
+				}
+				continue
+			}
+			kept = append(kept, n.Content[i], n.Content[i+1])
+		}
+		n.Content = kept
+	}
+	for i, c := range n.Content {
+		next := 0
+		switch {
+		case n.Kind == yaml.DocumentNode:
+			root = true
+		case strict > 1:
+			next = strict - 1
+		case n.Kind == yaml.MappingNode && root && i%2 == 1 && n.Content[i-1].Value == "paths":
+			next = 2
+		}
+		if err := dedupeKeys(c, next, root && n.Kind == yaml.DocumentNode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Load parses an OpenAPI document.
 func Load(data []byte) (*Spec, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse spec: %w", err)
+	}
+	if err := dedupeKeys(&root, 0, false); err != nil {
+		return nil, fmt.Errorf("parse spec: %w", err)
+	}
 	var doc node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := root.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("parse spec: %w", err)
 	}
 	if doc.OpenAPI == "" || len(doc.Paths) == 0 {
