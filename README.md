@@ -73,7 +73,10 @@ GITHUB_TOKEN=<token> scripts/sync_spec.sh --check   # fail if the pinned copy is
 The token (or a logged-in `gh`) needs read access to `dotdevlabs/autonomat`. Without one, `--check` fails;
 `AUTONOMATCTL_ALLOW_SPEC_SKIP=1` skips it explicitly. After a sync, rebuild: an operation added to the contract
 appears as a command with no hand-written code. Generation fails loudly if two operations map to the same
-command, a field collides with a CLI flag, or a name collides with a built-in command.
+command, a query parameter collides with a CLI flag, or a name collides with a built-in command.
+
+A body field named like a reserved CLI flag (the inbox part `context` vs the global `--context`) is exposed as
+`--attr-<name>` (`--attr-context`) and still sent under its contract name.
 
 Relationship operations whose body is a list of resource identifiers take a repeatable `--ids` flag; the
 command sends each id as `{type, id}` in `data`. The loader tolerates duplicate mapping keys in the contract
