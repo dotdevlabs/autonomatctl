@@ -35,7 +35,7 @@ func TestLoadPinned(t *testing.T) {
 	if s.Title != "Autonomat API" || s.Version == "" || s.OpenAPI == "" {
 		t.Fatalf("bad header: %+v", s)
 	}
-	if len(s.Operations) != 103 {
+	if len(s.Operations) != 105 {
 		t.Fatalf("operations = %d", len(s.Operations))
 	}
 	ids := map[string]bool{}
@@ -47,7 +47,7 @@ func TestLoadPinned(t *testing.T) {
 	}
 
 	list := find(t, s, "listWorkItems")
-	if !list.Collection || len(list.Query) != 1 || list.Query[0].Name != "q" || list.Query[0].Type != "string" {
+	if !list.Collection || len(list.Query) != 3 || list.Query[0].Name != "q" || list.Query[0].Type != "string" {
 		t.Fatalf("listWorkItems = %+v", list)
 	}
 	get := find(t, s, "getWorkItem")

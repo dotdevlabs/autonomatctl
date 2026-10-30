@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "1.16.0"
+  version: "1.19.0"
 components:
   securitySchemes:
     apiToken:
@@ -394,12 +394,16 @@ components:
     WorkItemsDocument:
       type: object
       additionalProperties: false
-      required: [data]
+      required: [data, links, meta]
       properties:
         data:
           type: array
           items:
             $ref: "#/components/schemas/WorkItemResource"
+        links:
+          $ref: "#/components/schemas/CollectionLinks"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
     ResourceLinkage:
       type: object
       additionalProperties: false
@@ -827,6 +831,10 @@ components:
       properties:
         status:
           type: string
+          enum: [running, finished, completed, failed]
+          description: >-
+            Progress state (`running`) or terminal state (`finished`, `completed`, `failed`). Any other value is a 422
+            with `source.pointer` `/data/attributes/status`. A delivery for a run that is already terminal is a 409.
         started_at:
           type: string
           nullable: true
@@ -1168,6 +1176,35 @@ components:
               type: string
             attributes:
               $ref: "#/components/schemas/ExecutionAttributes"
+    RunTokenDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, attributes]
+          properties:
+            type:
+              type: string
+              enum: [run-tokens]
+            id:
+              type: string
+            attributes:
+              type: object
+              additionalProperties: false
+              required: [api_token]
+              properties:
+                api_token:
+                  type: object
+                  additionalProperties: false
+                  required: [token, expires_at]
+                  properties:
+                    token:
+                      type: string
+                    expires_at:
+                      type: string
     RunExecutionDocument:
       type: object
       additionalProperties: false
@@ -1533,10 +1570,18 @@ components:
             attributes:
               type: object
               additionalProperties: false
+              x-required-by-category:
+                decision: ["question","context","options","recommendation","evidence","cost_of_waiting"]
+                approval: ["request","reason"]
+                access: ["steps","reason","unblocks","evidence","continuation"]
+                information: ["request","context","evidence","continuation"]
+                review: ["request","context","evidence","continuation"]
+                attestation: ["request","context","evidence","continuation"]
+                external_action: ["steps","reason","unblocks","evidence","continuation"]
               description: >
                 Only the given parts change; give at least one and none may be blank. An operator-owned pending
                 item must keep every part the account requires of its category (`GET /inbox_requirements`);
-                a missing or blank required part is a 422 with one `source.pointer` per part.
+                a missing or blank required part is a 422 with one `source.pointer` (`/data/attributes/<part>`) per part, and a value that is not a string (a text part) is a 422 pointing at that attribute. `x-required-by-category` states the default required parts per category.
               properties:
                 title:
                   type: string
@@ -3026,6 +3071,14 @@ components:
             attributes:
               type: object
               additionalProperties: false
+              x-required-by-category:
+                decision: ["question","context","options","recommendation","evidence","cost_of_waiting"]
+                approval: ["request","reason"]
+                access: ["steps","reason","unblocks","evidence","continuation"]
+                information: ["request","context","evidence","continuation"]
+                review: ["request","context","evidence","continuation"]
+                attestation: ["request","context","evidence","continuation"]
+                external_action: ["steps","reason","unblocks","evidence","continuation"]
               required: [category]
               description: >
                 Files an operator-owned pending item. Which parts a category needs is account data
@@ -3033,7 +3086,7 @@ components:
                 each with a consequence), recommendation (naming an option key), evidence, cost_of_waiting;
                 external_action and access: steps, reason, unblocks, evidence, continuation; approval: request,
                 reason; information, review and attestation: request, context, evidence, continuation.
-                A missing or blank required part is a 422 with one `source.pointer` per part.
+                A missing or blank required part is a 422 with one `source.pointer` (`/data/attributes/<part>`) per part; a value that is not a string (any part but `options`) is a 422 pointing at that attribute and nothing is stored. `x-required-by-category` states the default required parts per category.
               properties:
                 category:
                   type: string
@@ -3150,7 +3203,7 @@ components:
       additionalProperties: false
       required: [title, status, category, owner, ref, request, reason, evidence, prepared_result, governing_policy,
                  continuation, denial_continuation, cause_key, requested_value_label, question, context, options,
-                 steps, unblocks, cost_of_waiting, recommendation, required_parts, call, call_result,
+                 steps, unblocks, cost_of_waiting, recommendation, required_parts, missing_parts, call, call_result,
                  created_at, updated_at, origin, work_item_id, execution_id, resolution]
       properties:
         title:
@@ -3217,6 +3270,8 @@ components:
           nullable: true
           description: The key of the recommended option of a decision.
         required_parts:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        missing_parts:
           $ref: "#/components/schemas/InboxRequiredParts"
         call:
           type: object
@@ -3533,7 +3588,7 @@ components:
     ProductResourceAttributes:
       type: object
       additionalProperties: false
-      required: [name, key, purpose, next_action, stage, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, parent_id, created_at, updated_at]
+      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, parent_id, created_at, updated_at]
       properties:
         name:
           type: string
@@ -3549,6 +3604,10 @@ components:
         stage:
           type: string
           enum: [development, live, sunset]
+        state:
+          type: string
+          enum: [development, live, sunset]
+          description: The current state of the product's lifecycle machine; `stage` is its read cache.
         health_state:
           type: string
           enum: [healthy, at_risk, unhealthy, unknown]
@@ -3818,6 +3877,58 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProductDocumentResource"
+        links:
+          $ref: "#/components/schemas/CollectionLinks"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    ProductTransitionAttributes:
+      type: object
+      additionalProperties: false
+      required: [from_state, to_state, sort_key, actor_type, actor_id, reason, created_at]
+      properties:
+        from_state:
+          type: string
+          nullable: true
+          enum: [development, live, sunset]
+        to_state:
+          type: string
+          enum: [development, live, sunset]
+        sort_key:
+          type: integer
+        actor_type:
+          type: string
+          nullable: true
+        actor_id:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+    ProductTransitionResource:
+      type: object
+      additionalProperties: false
+      required: [type, id, links, attributes]
+      properties:
+        type:
+          type: string
+          enum: [product-transitions]
+        id:
+          type: string
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
+        attributes:
+          $ref: "#/components/schemas/ProductTransitionAttributes"
+    ProductTransitionCollectionDocument:
+      type: object
+      additionalProperties: false
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductTransitionResource"
         links:
           $ref: "#/components/schemas/CollectionLinks"
         meta:
@@ -4500,14 +4611,51 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `status:open product:myproduct since:2026-10-01 sort:updated-desc`
             Unknown qualifiers return 422.
-            `status:` takes `open`, `closed`, `cancelled`, `queued`, `sent`, `running`, `finished` or `failed` (several values separated by commas, e.g. `status:open,failed`). Any other value, such as `blocked`, returns 422: blocked work is not a status.
+            `status:` takes `open`, `closed`, `cancelled`, `queued`, `sent`, `running`, `finished` or `failed` (several values separated by commas, e.g. `status:open,failed`). Any other value, such as `blocked`, returns 422: blocked work is not a status; use `is:blocked` (work items with a pending inbox item block) and `-is:blocked`.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: status
-              values: [open, closed, cancelled, queued, sent, running, finished, failed]
+              type: enum
+              values: ["open","closed","cancelled","queued","sent","running","finished","failed"]
+              description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
+            - key: product
+              type: reference
+              description: "The record id (as in API resources) or its key; `-product:` negates."
+            - key: initiative
+              type: reference
+              description: "The record id (as in API resources) or its key; `-initiative:` negates."
+            - key: is
+              type: boolean
+              values: ["blocked"]
+              description: "`is:blocked` keeps work items blocked by a pending inbox item; `-is:blocked` keeps the others."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["updated-asc","updated-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
+        - name: "page[number]"
+          in: query
+          required: false
+          description: Page number, starting at 1 (default 1).
+          schema:
+            type: integer
+            minimum: 1
+        - name: "page[size]"
+          in: query
+          required: false
+          description: Items per page, 1 to 100 (default 25).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
       x-scenarios:
         - id: authorized_success
           status: 200
@@ -4520,9 +4668,13 @@ paths:
           auth: apiToken
           query:
             q: "badqualifier:x"
+        - id: invalid_page_size
+          status: 422
+          auth: apiToken
+          query: {"page": {"size": "0"}}
       responses:
         "200":
-          description: Work item collection
+          description: Paginated work item collection with `links` and `meta.page`, like every other list
           content:
             application/vnd.api+json:
               schema:
@@ -4534,7 +4686,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
-          description: Invalid query qualifier
+          description: Invalid query qualifier or page parameter
           content:
             application/vnd.api+json:
               schema:
@@ -4919,7 +5071,29 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: status
-              values: [draft, active, concluded, abandoned]
+              type: enum
+              values: ["draft","active","concluded","abandoned"]
+              description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
+            - key: product
+              type: reference
+              description: "The record id (as in API resources) or its key; `-product:` negates."
+            - key: is
+              type: boolean
+              values: ["paused"]
+              description: "A flag filter; `-is:<value>` negates it."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["title-asc","title-desc","updated-asc","updated-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
         - name: page[number]
@@ -5403,7 +5577,22 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: status
-              values: [active, complete, archived]
+              type: enum
+              values: ["active","complete","archived"]
+              description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
+            - key: product
+              type: reference
+              description: "The record id (as in API resources) or its key; `-product:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["title-asc","title-desc","updated-asc","updated-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: page[number]
@@ -5971,7 +6160,7 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
   /products/{product_id}/sunset:
     post:
-      summary: Sunset a product (operator action; there is no way back)
+      summary: Sunset a product (operator action; there is no way back). Moves it through the lifecycle machine to sunset and archives it in the same transaction.
       operationId: sunsetProduct
       security:
         - apiToken: []
@@ -6014,11 +6203,11 @@ paths:
             product_id: "~fixture:products:sunset_product"
       responses:
         "200":
-          description: The product, now in the sunset stage
+          description: The product, now sunset and archived
           content:
             application/vnd.api+json:
               schema:
-                $ref: "#/components/schemas/ProductDocument"
+                $ref: "#/components/schemas/ProductResourceDocument"
         "401":
           description: Unauthorized
           content:
@@ -6054,11 +6243,33 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: status
-              values: [pending, completed]
+              type: enum
+              values: ["pending","completed"]
+              description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
             - key: category
-              values: [decision, approval, access, information, review, attestation, external_action]
+              type: enum
+              values: ["decision","approval","access","information","review","attestation","external_action"]
+              description: "One of the listed values; several values separated by commas match any of them, `-category:` negates."
             - key: owner
-              values: [approval, operator]
+              type: enum
+              values: ["approval","operator"]
+              description: "One of the listed values; several values separated by commas match any of them, `-owner:` negates."
+            - key: product
+              type: reference
+              description: "The record id (as in API resources) or its key; `-product:` negates."
+            - key: initiative
+              type: reference
+              description: "The record id (as in API resources) or its key; `-initiative:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["created-asc","created-desc","updated-asc","updated-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: "page[number]"
@@ -6213,7 +6424,25 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: kind
-              values: [activity, market, research, portfolio, feedback, usage, sales, deploy]
+              type: enum
+              values: ["activity","market","research","portfolio","feedback","usage","sales","deploy"]
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
+            - key: product
+              type: reference
+              description: "The record id (as in API resources) or its key; `-product:` negates."
+            - key: source
+              type: reference
+              description: "The record id (as in API resources) or its name; `-source:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on received_on, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on received_on, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["received-asc","received-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: "page[number]"
@@ -6459,9 +6688,29 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: kind
-              values: [execution, tool_invocation, record_change, signal, inbox_resolution, document_change]
+              type: enum
+              values: ["execution","tool_invocation","record_change","signal","inbox_resolution","document_change"]
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
             - key: subject
-              values: [Execution, ExecutionAction, InboxItem, WorkItem, Product, Initiative, User, Refinement, DocumentRevision, Message, IncomingSignal]
+              type: enum
+              values: ["Execution","ExecutionAction","InboxItem","WorkItem","Product","Initiative","User","Refinement","DocumentRevision","Message","IncomingSignal"]
+              description: "One of the listed values; several values separated by commas match any of them, `-subject:` negates."
+            - key: product
+              type: reference
+              description: "The record id (as in API resources) or its key; `-product:` negates."
+            - key: initiative
+              type: reference
+              description: "The record id (as in API resources) or its key; `-initiative:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on occurred_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on occurred_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["occurred-asc","occurred-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: "page[number]"
@@ -7280,11 +7529,20 @@ paths:
           in: query
           required: false
           description: |
-            Filter query supporting typed qualifiers: `state:proposed|accepted|rejected`, `since:<date>` (created), `sort:revision-asc|created-asc`.
+            Filter query supporting the typed qualifiers listed in `x-qualifiers` (each with its type, values and description).
             Unknown qualifiers or invalid values return 422.
           x-qualifiers:
             - key: state
-              values: [proposed, accepted, rejected]
+              type: enum
+              values: ["proposed","accepted","rejected"]
+              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on created_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["revision-asc","revision-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: page[number]
@@ -7535,13 +7793,33 @@ paths:
           required: false
           description: |
             `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
-            Filter query supporting typed qualifiers: `stage:development|live|sunset`, `health:healthy|at_risk|unhealthy|unknown`, `name:<text>`, `since:<date>` / `until:<date>` (last activity), `sort:name-asc|activity-desc|created-asc`. Free text searches names. Example: `stage:live health:at_risk since:2026-10-01`.
+            Filter query supporting the typed qualifiers listed in `x-qualifiers` (each with its type, values and description). Free text searches names. Example: `stage:live health:at_risk since:2026-10-01`.
             Unknown qualifiers or invalid values return 422.
           x-qualifiers:
             - key: stage
-              values: [development, live, sunset]
+              type: enum
+              values: ["development","live","sunset"]
+              description: "One of the listed values; several values separated by commas match any of them, `-stage:` negates."
             - key: health
-              values: [healthy, at_risk, unhealthy, unknown]
+              type: enum
+              values: ["healthy","at_risk","unhealthy","unknown"]
+              description: "One of the listed values; several values separated by commas match any of them, `-health:` negates."
+            - key: name
+              type: text
+              description: "Case-insensitive substring of name; several values separated by commas match any of them."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on last_activity_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on last_activity_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["name-asc","name-desc","activity-asc","activity-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
         - name: page[number]
@@ -7842,7 +8120,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     delete:
-      summary: Archive a product (the record and its history are kept)
+      summary: Sunset a product through the lifecycle machine, which also archives it (the record and its history are kept)
       operationId: archiveProduct
       security:
         - apiToken: []
@@ -7905,7 +8183,7 @@ paths:
           raw_body: '{"data": '
       responses:
         "204":
-          description: Archived
+          description: Sunset and archived
         "401":
           description: Unauthorized
           content:
@@ -7930,6 +8208,121 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+  /products/{product_id}/transitions:
+    get:
+      summary: List a product's lifecycle transitions (newest first), with who made each and why
+      operationId: listProductTransitions
+      security:
+        - apiToken: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page[number]
+          in: query
+          required: false
+          description: Page number, starting at 1.
+          schema:
+            type: integer
+            minimum: 1
+        - name: page[size]
+          in: query
+          required: false
+          description: Page size, 1 to 100 (default 25). A value outside the range returns 422.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      x-run-targets:
+        - model: Product
+          in: path
+          key: product_id
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: sunset_product_history
+          status: 200
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:sunset_product"
+        - id: granted
+          status: 200
+          auth: runToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: expired_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            product_id: "~fixture:products:sunset_product"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            product_id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+        - id: invalid_page
+          status: 422
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+          query:
+            "page[number]": "0"
+      responses:
+        "200":
+          description: Product transition collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ProductTransitionCollectionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid page parameters
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /products/{product_id}/documents:
     get:
       summary: List a product's documents, each with its accepted revision
@@ -7946,13 +8339,24 @@ paths:
           in: query
           required: false
           description: |
-            Filter query supporting typed qualifiers: `kind:icp|prd|drd|trd|mrd|rrd|ord|lrd`, `state:missing|needs_review|accepted|draft`, `since:<date>` (updated), `sort:kind-asc|updated-asc`.
+            Filter query supporting the typed qualifiers listed in `x-qualifiers` (each with its type, values and description).
             Unknown qualifiers or invalid values return 422.
           x-qualifiers:
             - key: kind
-              values: [icp, prd, drd, trd, mrd, rrd, ord, lrd, strategy]
+              type: enum
+              values: ["icp","prd","drd","trd","mrd","rrd","ord","lrd","strategy"]
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
             - key: state
-              values: [missing, needs_review, accepted, draft]
+              type: enum
+              values: ["missing","needs_review","accepted","draft"]
+              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["kind-asc","kind-desc","updated-asc","updated-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: page[number]
@@ -8308,7 +8712,13 @@ paths:
             Unknown qualifiers or values return 422.
           x-qualifiers:
             - key: state
-              values: [proposed, accepted, rejected]
+              type: enum
+              values: ["proposed","accepted","rejected"]
+              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
+            - key: sort
+              type: sort
+              values: ["number-asc","number-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: "page[number]"
@@ -8533,11 +8943,27 @@ paths:
             Unknown qualifiers or values return 422.
           x-qualifiers:
             - key: kind
-              values: [decision, procedure]
+              type: enum
+              values: ["decision","procedure"]
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
             - key: level
-              values: [mandatory, default]
+              type: enum
+              values: ["mandatory","default"]
+              description: "One of the listed values; several values separated by commas match any of them, `-level:` negates."
             - key: status
-              values: [active, superseded]
+              type: enum
+              values: ["active","superseded"]
+              description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["key-asc","key-desc","updated-asc","updated-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
         - name: "page[number]"
@@ -8795,6 +9221,21 @@ paths:
             `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Typed filter query. Example: `enabled:true since:2026-10-01 sort:key-asc`. Archived policies are not listed.
             Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: enabled
+              type: boolean
+              values: ["true","false"]
+              description: "A flag filter; `-enabled:<value>` negates it."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["key-asc","key-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
         - name: "page[number]"
@@ -9226,7 +9667,16 @@ paths:
             Unknown qualifiers or values return 422.
           x-qualifiers:
             - key: interface
-              values: [cli, http, builtin, requested_action, unknown]
+              type: enum
+              values: ["cli","http","builtin","requested_action","unknown"]
+              description: "One of the listed values; several values separated by commas match any of them, `-interface:` negates."
+            - key: sort
+              type: sort
+              values: ["key-asc","key-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
         - name: "page[number]"
@@ -9567,7 +10017,23 @@ paths:
             Unknown qualifiers or values return 422.
           x-qualifiers:
             - key: kind
-              values: [standard, reality-review]
+              type: enum
+              values: ["standard","reality-review"]
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
+            - key: enabled
+              type: boolean
+              values: ["true","false"]
+              description: "A flag filter; `-enabled:<value>` negates it."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["key-asc","key-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
         - name: "page[number]"
@@ -9851,9 +10317,20 @@ paths:
             Unknown qualifiers or values return 422.
           x-qualifiers:
             - key: kind
-              values: [github, sentry, loopcontrol, clustercontrol, terraform_cloud, kubernetes, loki, grafana, billingcontrol, model]
+              type: enum
+              values: ["github","sentry","loopcontrol","clustercontrol","terraform_cloud","kubernetes","loki","grafana","billingcontrol","model"]
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
             - key: state
-              values: [saved, checking, verified, failed, not_live, removed]
+              type: enum
+              values: ["saved","checking","verified","failed","not_live","removed"]
+              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["name-asc","name-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: "page[number]"
@@ -10276,12 +10753,33 @@ paths:
           required: false
           description: |
             Filter query with typed qualifiers. Example: `schedule_run:12 step:2 state:finished`.
-            Qualifiers: `schedule_run:<id>` (the schedule run id), `step:<n>` (1-based, as shown to agents; accepts comparisons and ranges such as `step:1..3`), `node:<node key>` (e.g. `root`, `product:alpha`, `initiative:launch`), `state:<state>` (queued, sent, running, finished, completed, failed), `kind:<kind>` (e.g. schedule, answer, approved_call), `since:<date>` (executions created on or after the date), and `sort:created-asc|created-desc|started-asc|started-desc`. Prefix a qualifier with `-` to negate it; comma-separated values are alternatives.
+            The qualifiers are listed in `x-qualifiers`; `step:` is 1-based, as shown to agents, and accepts comparisons and ranges such as `step:1..3`; `node:` takes a node key such as `root`, `product:alpha` or `initiative:launch`. Prefix a qualifier with `-` to negate it; comma-separated values are alternatives.
             Unknown qualifiers and invalid values return 422 with `source.parameter` `q`.
             A run token reads only the executions of its own node; the root run reads all of the account's executions.
           x-qualifiers:
+            - key: schedule_run
+              type: number
+              description: "An integer on schedule_run_id, with >=, >, <=, < or a range `from..to`."
+            - key: step
+              type: number
+              description: "An integer on step_index, with >=, >, <=, < or a range `from..to`."
+            - key: node
+              type: enum
+              description: "One of the listed values; several values separated by commas match any of them, `-node:` negates."
             - key: state
-              values: [queued, sent, running, finished, completed, failed]
+              type: enum
+              values: ["queued","sent","running","finished","completed","failed"]
+              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
+            - key: kind
+              type: enum
+              description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on created_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["created-asc","created-desc","started-asc","started-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: "page[number]"
@@ -10420,6 +10918,11 @@ paths:
           auth: none
           params:
             run_id: "~fixture:executions:run_for_execution"
+        - id: expired_run_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            run_id: "~fixture:executions:run_for_execution"
         - id: not_found
           status: 404
           auth: apiToken
@@ -10454,7 +10957,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunExecutionDocument"
         "401":
-          description: Unauthorized
+          description: >-
+            Unauthorized. An expired run token is answered with the title "Credential not accepted. run token expired."
+            so the agent knows to refresh (`POST /runs/{run_id}/token`) before expiry. The payload's `api_token` is
+            issued once per execution attempt: fetching the payload again returns the same token while it is valid.
           content:
             application/vnd.api+json:
               schema:
@@ -10466,13 +10972,113 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
         "409":
-          description: Dispatch blocked by active pause or stop control
+          description: >-
+            Dispatch blocked: an active pause or stop control, or a paused initiative (automatic dispatch paused).
+            The reason is in `errors[0].title`.
           content:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
-          description: Run cannot be dispatched (unusable credential, budget or policy)
+          description: >-
+            Run cannot be dispatched (unusable credential, budget or policy), or the node context of a schedule run
+            could not be built (the execution is then failed with the error as its reason).
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /runs/{run_id}/token:
+    post:
+      summary: Refresh the run token of a run
+      operationId: refreshRunToken
+      description: >-
+        Revokes the run's current token and issues a new one with a fresh lifetime, returned as `api_token`
+        (`token`, `expires_at`). Authenticated by the run's own token while it is still valid, or by an account
+        token. An expired token is a 401 ("run token expired"); fetch the payload again to obtain a new token.
+        A terminal run gets no token (409). A run token of another run is a 403. Needs no capability grant.
+      security:
+        - apiToken: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-scenarios:
+        - id: refreshed_with_run_token
+          status: 200
+          auth: runToken
+          params:
+            run_id: "~fixture:executions:run_api_root"
+        - id: refreshed_with_account_token
+          status: 200
+          auth: apiToken
+          params:
+            run_id: "~fixture:executions:run_for_execution"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            run_id: "~fixture:executions:run_api_root"
+        - id: expired_run_token
+          status: 401
+          auth: expiredRunToken
+          params:
+            run_id: "~fixture:executions:run_api_root"
+        - id: other_runs_token
+          status: 403
+          auth: runToken
+          params:
+            run_id: "~fixture:executions:run_api_ungranted"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            run_id: "0"
+        - id: terminal_run
+          status: 409
+          auth: apiToken
+          params:
+            run_id: "~fixture:executions:run_two"
+        - id: malformed_body
+          status: 422
+          auth: apiToken
+          raw_body: "{not json"
+          params:
+            run_id: "~fixture:executions:run_for_execution"
+      responses:
+        "200":
+          description: Fresh run token
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunTokenDocument"
+        "401":
+          description: Unauthorized, or the run token has expired ("Credential not accepted. run token expired.")
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: The run token belongs to another run
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Run not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "409":
+          description: The run is terminal; no token is issued
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The request body is not a valid JSON:API document
           content:
             application/vnd.api+json:
               schema:
@@ -10638,6 +11244,24 @@ paths:
               type: run-results
               id: "~fixture:executions:run_one"
               attributes: {}
+        - id: invalid_status
+          status: 422
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_one"
+              attributes:
+                status: bogus
+        - id: run_already_terminal
+          status: 409
+          auth: webhookToken
+          body:
+            data:
+              type: run-results
+              id: "~fixture:executions:run_failed"
+              attributes:
+                status: finished
         - id: run_not_dispatched
           status: 422
           auth: webhookToken
@@ -10666,8 +11290,16 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+        "409":
+          description: >-
+            The run is already terminal (finished, completed or failed). The delivery changes nothing, performs no
+            requested action and is recorded as an `execution`/`delivery_rejected` activity event.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
         "422":
-          description: Validation error
+          description: Validation error, unknown status (not one of running, finished, completed, failed) or run not dispatched
           content:
             application/vnd.api+json:
               schema:
@@ -11005,7 +11637,19 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: interface
-              values: [cli, http, builtin, requested_action, unknown]
+              type: enum
+              values: ["cli","http","builtin","requested_action","unknown"]
+              description: "One of the listed values; several values separated by commas match any of them, `-interface:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["key-asc","key-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
       x-scenarios:
@@ -11440,6 +12084,17 @@ paths:
             Unknown qualifiers return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["title-asc","title-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
           schema:
             type: string
       x-scenarios:
@@ -12366,7 +13021,19 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: context_type
-              values: [Product, Initiative, Refinement, WorkItem, InboxItem]
+              type: enum
+              values: ["Product","Initiative","Refinement","WorkItem","InboxItem"]
+              description: "One of the listed values; several values separated by commas match any of them, `-context_type:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on last_activity_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on last_activity_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["updated-asc","updated-desc","created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: page[number]
@@ -12625,7 +13292,19 @@ paths:
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           x-qualifiers:
             - key: role
-              values: [operator, assistant]
+              type: enum
+              values: ["operator","assistant"]
+              description: "One of the listed values; several values separated by commas match any of them, `-role:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on created_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on created_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["created-asc","created-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
           schema:
             type: string
         - name: page[number]

@@ -4,6 +4,7 @@
 package spec
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -49,6 +50,30 @@ type Param struct {
 	Type        string
 	Description string
 	Required    bool
+	// Enum is the parameter schema's enum, empty when it has none.
+	Enum []string
+	// Qualifiers are the typed filter qualifiers the contract documents on the
+	// parameter (x-qualifiers), in contract order.
+	Qualifiers []Qualifier
+}
+
+// Qualifier types the contract uses in x-qualifiers.
+const (
+	QualEnum      = "enum"
+	QualSort      = "sort"
+	QualDate      = "date"
+	QualReference = "reference"
+	QualBoolean   = "boolean"
+	QualNumber    = "number"
+	QualText      = "text"
+)
+
+// Qualifier is one documented `key:value` filter of a list query.
+type Qualifier struct {
+	Key         string
+	Type        string
+	Values      []string
+	Description string
 }
 
 // Body describes a JSON:API request document.
@@ -62,6 +87,9 @@ type Body struct {
 	IDRequired bool
 	Fields     []Field // data.attributes properties, in contract order
 	Required   bool
+	// RequiredByCategory is the attributes schema's x-required-by-category: the
+	// default required parts per category. Nil when undocumented.
+	RequiredByCategory map[string][]string
 }
 
 // Field is one documented attribute.
@@ -76,6 +104,9 @@ type Field struct {
 	// absent default from a documented null.
 	Default    any
 	HasDefault bool
+	// Schema is the JSON Schema of an object or array-of-non-string field with
+	// local $refs inlined and x-* extensions dropped; nil for other fields.
+	Schema json.RawMessage
 }
 
 // dedupeKeys removes repeated mapping keys, keeping the last definition as
@@ -211,6 +242,15 @@ type param struct {
 	Required    bool    `yaml:"required"`
 	Description string  `yaml:"description"`
 	Schema      *schema `yaml:"schema"`
+
+	Qualifiers []qualifier `yaml:"x-qualifiers"`
+}
+
+type qualifier struct {
+	Key         string   `yaml:"key"`
+	Type        string   `yaml:"type"`
+	Values      []string `yaml:"values"`
+	Description string   `yaml:"description"`
 }
 
 type requestBody struct {
@@ -235,6 +275,23 @@ type schema struct {
 	Properties  props       `yaml:"properties"`
 	Items       *schema     `yaml:"items"`
 	Default     yaml.Node   `yaml:"default"`
+
+	RequiredByCategory map[string][]string `yaml:"x-required-by-category"`
+
+	// raw is the schema's own YAML, kept to emit it as JSON Schema.
+	raw *yaml.Node
+}
+
+// UnmarshalYAML decodes the typed view and keeps the raw node.
+func (s *schema) UnmarshalYAML(n *yaml.Node) error {
+	type plain schema
+	var p plain
+	if err := n.Decode(&p); err != nil {
+		return err
+	}
+	*s = schema(p)
+	s.raw = n
+	return nil
 }
 
 // props is an ordered property map: flag order follows the contract.

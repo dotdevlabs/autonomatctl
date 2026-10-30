@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dotdevlabs/ctlkit/pkg/airef"
 	"github.com/dotdevlabs/ctlkit/pkg/clierror"
 	"github.com/dotdevlabs/ctlkit/pkg/ctxutil"
 
@@ -29,6 +30,9 @@ const (
 	AnnMethod      = "method"
 	AnnPath        = "path"
 	AnnWebhook     = "webhook"
+	// AnnRequiredByCategory carries the contract's x-required-by-category as
+	// compact JSON ({"<category>":["<part>",...]}).
+	AnnRequiredByCategory = "required_by_category"
 )
 
 // reservedFlags are the global flags and the CLI-only flags; a contract field
@@ -192,6 +196,8 @@ type input struct {
 	required bool
 	typ      string // contract type, for JSON validation
 	query    bool
+	// schema is the contract's JSON Schema of an object or array value.
+	schema json.RawMessage
 	// A required attribute whose default the contract documents needs no
 	// flag: the default is sent when the flag is omitted.
 	def     any
@@ -241,7 +247,8 @@ func usage(desc string, in input) string {
 	return u
 }
 
-func addFlag(fs *pflag.FlagSet, in input, desc string) {
+func addFlag(cmd *cobra.Command, in input, desc string) error {
+	fs := cmd.Flags()
 	u := usage(desc, in)
 	defer func() {
 		if in.required {
@@ -262,6 +269,15 @@ func addFlag(fs *pflag.FlagSet, in input, desc string) {
 	default:
 		fs.String(in.flagName(), "", u)
 	}
+	if len(in.enum) > 0 {
+		if err := airef.SetFlagEnum(cmd, in.flagName(), in.enum); err != nil {
+			return err
+		}
+	}
+	if len(in.schema) > 0 {
+		return airef.SetFlagSchema(cmd, in.flagName(), string(in.schema))
+	}
+	return nil
 }
 
 func destructive(op spec.Operation) bool {
@@ -306,6 +322,7 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 	}
 
 	var inputs []input
+	var quals []qualInput
 	seen := map[string]bool{}
 	claimFlag := func(n string) error {
 		if seen[n] {
@@ -327,12 +344,26 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 		if err := claim(q.Name); err != nil {
 			return nil, err
 		}
-		in := input{name: q.Name, kind: kindOf(q.Type, "string"), required: q.Required, typ: q.Type, query: true}
+		in := input{name: q.Name, kind: kindOf(q.Type, "string"), enum: q.Enum, required: q.Required, typ: q.Type, query: true}
 		if in.kind == kJSON { // object-typed query parameters are sent as given
 			in.kind = kString
 		}
 		inputs = append(inputs, in)
-		addFlag(fs, in, q.Description)
+		if err := addFlag(cmd, in, q.Description); err != nil {
+			return nil, err
+		}
+		if q.Name == queryParam {
+			for _, ql := range q.Qualifiers {
+				qi, qin := newQualInput(ql)
+				if err := claimFlag(qi.flag); err != nil {
+					return nil, err
+				}
+				if err := addFlag(cmd, qin, ql.Description); err != nil {
+					return nil, err
+				}
+				quals = append(quals, qi)
+			}
+		}
 	}
 	var idInput *input
 	if op.Body != nil && op.Body.Linkage {
@@ -341,7 +372,9 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 		}
 		in := input{name: linkageFlag, kind: kStrings, required: true, typ: "array"}
 		inputs = append(inputs, in)
-		addFlag(fs, in, "Ids of the "+op.Body.DataType+" to link (repeatable)")
+		if err := addFlag(cmd, in, "Ids of the "+op.Body.DataType+" to link (repeatable)"); err != nil {
+			return nil, err
+		}
 	} else if op.Body != nil {
 		if op.Body.HasID {
 			if err := claim("id"); err != nil {
@@ -351,7 +384,9 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 			// so marks id required even on create; the server is the judge of that.
 			in := input{name: "id", kind: kString, typ: "string"}
 			idInput = &in
-			addFlag(fs, in, "Resource id (data.id)")
+			if err := addFlag(cmd, in, "Resource id (data.id)"); err != nil {
+				return nil, err
+			}
 		}
 		for _, f := range op.Body.Fields {
 			flag := bodyFlag(f.Name)
@@ -364,12 +399,21 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 			if err != nil {
 				return nil, err
 			}
-			in := input{name: f.Name, flag: flag, kind: kindOf(f.Type, f.ItemType), enum: f.Enum, required: f.Required, typ: f.Type}
+			in := input{name: f.Name, flag: flag, kind: kindOf(f.Type, f.ItemType), enum: f.Enum, required: f.Required, typ: f.Type, schema: f.Schema}
 			if f.Required && f.HasDefault {
 				in.required, in.sendDef, in.def = false, true, f.Default
 			}
 			inputs = append(inputs, in)
-			addFlag(fs, in, f.Description)
+			if err := addFlag(cmd, in, f.Description); err != nil {
+				return nil, err
+			}
+		}
+		if rc := op.Body.RequiredByCategory; len(rc) > 0 {
+			enc, err := json.Marshal(rc)
+			if err != nil {
+				return nil, err
+			}
+			cmd.Annotations[AnnRequiredByCategory] = string(enc)
 		}
 	}
 	if op.Method == "GET" && op.Collection {
@@ -380,7 +424,7 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 	}
 
 	cmd.RunE = func(c *cobra.Command, args []string) error {
-		return b.run(c, op, idInput, inputs, args)
+		return b.run(c, op, idInput, inputs, quals, args)
 	}
 	return cmd, nil
 }
@@ -413,7 +457,7 @@ type docData struct {
 
 // request assembles the API request from the arguments and the flags the user
 // set. Only documented names can occur: they are the only flags there are.
-func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, args []string) (apiclient.Request, error) {
+func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, quals []qualInput, args []string) (apiclient.Request, error) {
 	req := apiclient.Request{Method: op.Method, Path: op.Path}
 	for i, p := range op.PathParams {
 		if args[i] == "" {
@@ -455,6 +499,19 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, a
 		} else if ok {
 			s := v.(string)
 			id = &s
+		}
+	}
+	if len(quals) > 0 {
+		free := ""
+		if f := query[queryParam]; len(f) > 0 {
+			free = f[0]
+		}
+		q, ok, err := joinQuery(c.Flags(), quals, free)
+		if err != nil {
+			return req, err
+		}
+		if ok {
+			query[queryParam] = []string{q}
 		}
 	}
 	if len(query) > 0 {
@@ -545,8 +602,8 @@ func contains(ss []string, v string) bool {
 	return false
 }
 
-func (b *builder) run(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, args []string) error {
-	req, err := request(c, op, idIn, inputs, args)
+func (b *builder) run(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, quals []qualInput, args []string) error {
+	req, err := request(c, op, idIn, inputs, quals, args)
 	if err != nil {
 		return err
 	}
