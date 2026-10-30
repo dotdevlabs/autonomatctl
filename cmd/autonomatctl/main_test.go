@@ -6,9 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/dotdevlabs/ctlkit/pkg/airef"
 
 	"github.com/dotdevlabs/autonomatctl/internal/gen"
 	"github.com/dotdevlabs/autonomatctl/internal/schema"
@@ -280,57 +285,63 @@ func TestAIReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	md, errOut, code := cli(t, "ai")
+	j1, errOut, code := cli(t, "ai", "--json")
 	if code != 0 || errOut != "" {
-		t.Fatalf("ai: %d %q", code, errOut)
+		t.Fatalf("ai --json: %d %q", code, errOut)
 	}
+	j2, _, _ := cli(t, "ai", "--json")
+	if j1 != j2 {
+		t.Error("ai --json is not byte-stable")
+	}
+	var ref airef.Reference
+	dec := json.NewDecoder(strings.NewReader(j1))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&ref); err != nil {
+		t.Fatalf("ai --json is not a ctlkit Reference: %v", err)
+	}
+	if ref.Product != product || len(ref.Commands) == 0 || !reflect.DeepEqual(ref.Workflows, workflows()) {
+		t.Errorf("reference = %s %s, %d commands, %d workflows", ref.Product, ref.Version, len(ref.Commands), len(ref.Workflows))
+	}
+
+	// Every visible contract operation appears with its exact annotations.
 	root, err := buildRoot(sp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := buildReference(root, "dev", workflows())
-	byOp := map[string]commandRef{}
-	for _, c := range ref.Commands {
-		if c.OperationID != "" {
-			byOp[c.OperationID] = c
+	hidden := map[string]bool{}
+	var walkCmd func(*cobra.Command)
+	walkCmd = func(c *cobra.Command) {
+		for _, s := range c.Commands() {
+			if s.Hidden {
+				hidden[s.Annotations[gen.AnnOperationID]] = true
+			}
+			walkCmd(s)
 		}
 	}
+	walkCmd(root)
+	byOp := map[string]airef.CommandRef{}
+	var walkRef func([]airef.CommandRef)
+	walkRef = func(cs []airef.CommandRef) {
+		for _, c := range cs {
+			if id := c.Annotations[gen.AnnOperationID]; id != "" {
+				byOp[id] = c
+			}
+			walkRef(c.Subcommands)
+		}
+	}
+	walkRef(ref.Commands)
 	for _, op := range sp.Operations {
 		c, ok := byOp[op.ID]
 		if !ok {
-			t.Errorf("ai --json lacks %s", op.ID)
+			if !hidden[op.ID] {
+				t.Errorf("ai --json lacks visible operation %s", op.ID)
+			}
 			continue
 		}
-		if !strings.Contains(md, "### "+c.Command+"\n") || !strings.Contains(md, "`"+op.Method+" "+op.Path+"`") {
-			t.Errorf("ai markdown lacks %q (%s %s)", c.Command, op.Method, op.Path)
+		if c.Annotations[gen.AnnMethod] != op.Method || c.Annotations[gen.AnnPath] != op.Path {
+			t.Errorf("%s: annotations %v, want %s %s", op.ID, c.Annotations, op.Method, op.Path)
 		}
 	}
-	for _, want := range []string{"## Common workflows", "Triage work items", "AUTONOMATCTL_TOKEN", "### auth login", "### schema", sp.Version, schema.SHA(), "webhook delivery"} {
-		if !strings.Contains(md, want) {
-			t.Errorf("ai markdown lacks %q", want)
-		}
-	}
-	if strings.Contains(md, "### help") || strings.Contains(md, "### completion") {
-		t.Error("ai lists help/completion")
-	}
-
-	j1, _, code := cli(t, "ai", "--json")
-	j2, _, _ := cli(t, "ai", "--json")
-	if code != 0 || j1 != j2 {
-		t.Error("ai --json is not byte-stable")
-	}
-	md2, _, _ := cli(t, "ai")
-	if md != md2 {
-		t.Error("ai markdown is not byte-stable")
-	}
-	var parsed reference
-	if err := json.Unmarshal([]byte(j1), &parsed); err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Contract.SHA != schema.SHA() || len(parsed.Commands) < len(sp.Operations) || len(parsed.Workflows) == 0 || len(parsed.ExitCodes) == 0 {
-		t.Errorf("reference = %+v", parsed.Contract)
-	}
-	// required flags and enums are structured
 	var sawRequired bool
 	for _, f := range byOp["createWorkItem"].Flags {
 		if f.Name == "title" && f.Required {
@@ -340,8 +351,29 @@ func TestAIReference(t *testing.T) {
 	if !sawRequired {
 		t.Error("createWorkItem --title not marked required in the reference")
 	}
-	if _, _, code := cli(t, "ai", "extra"); code == 0 {
-		t.Error("ai accepts arguments")
+
+	md, errOut, code := cli(t, "ai")
+	if code != 0 || errOut != "" {
+		t.Fatalf("ai: %d %q", code, errOut)
+	}
+	for _, want := range []string{"Common Workflows", "Triage work items", "work-items"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("ai markdown lacks %q", want)
+		}
+	}
+}
+
+func TestMissingRequiredFlagIsUsageError(t *testing.T) {
+	sandbox(t)
+	srv := newServer(t)
+	login(t, "t", srv.URL, "tok", true)
+	n := srv.count()
+	_, errOut, code := cli(t, "work-items", "create")
+	if code != 8 || !strings.Contains(errOut, "required flag") {
+		t.Errorf("exit %d, stderr %q; want 8 with a required-flag message", code, errOut)
+	}
+	if srv.count() != n {
+		t.Error("a request was sent for a missing required flag")
 	}
 }
 
@@ -443,5 +475,4 @@ func TestReservedNamesStayInSync(t *testing.T) {
 			t.Errorf("reserved name %q is not a command", name)
 		}
 	}
-	_ = gen.AnnPath
 }

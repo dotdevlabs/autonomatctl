@@ -275,7 +275,72 @@ func TestNewOperationNeedsNoCode(t *testing.T) {
 	if string(got.Body) != `{"data":{"type":"frobnications","attributes":{"label":"x","level":3}}}` {
 		t.Errorf("body = %s", got.Body)
 	}
-	if _, _, err := run(t, sp, srv.URL, "gizmos", "frobnications", "create", "g9"); err == nil || !strings.Contains(err.Error(), "--level") {
+	if _, _, err := run(t, sp, srv.URL, "gizmos", "frobnications", "create", "g9"); err == nil || !strings.Contains(err.Error(), `"level"`) {
 		t.Errorf("required --level not enforced: %v", err)
+	}
+}
+
+// TestOperationAnnotations pins the annotations ctlkit's ai reference prints:
+// exactly operation_id, method and path (plus webhook) from the contract.
+func TestOperationAnnotations(t *testing.T) {
+	sp := pinnedSpec(t)
+	byOp := commandsByOperation(testRoot(t, sp, "http://unused.invalid", fastCfg()))
+	for _, op := range sp.Operations {
+		c, ok := byOp[op.ID]
+		if !ok {
+			t.Fatalf("operation %s has no command", op.ID)
+		}
+		want := map[string]string{AnnOperationID: op.ID, AnnMethod: op.Method, AnnPath: op.Path}
+		if c.Hidden {
+			want[AnnWebhook] = "true"
+		}
+		if !reflect.DeepEqual(c.Annotations, want) {
+			t.Errorf("%s: annotations = %v, want %v", op.ID, c.Annotations, want)
+		}
+	}
+}
+
+// TestRequiredInputsAreRequiredFlags checks that required query parameters,
+// body fields and the linkage ids carry cobra's required annotation, and that
+// optional and defaulted ones do not.
+func TestRequiredInputsAreRequiredFlags(t *testing.T) {
+	isRequired := func(c *cobra.Command, name string) bool {
+		f := c.Flags().Lookup(name)
+		if f == nil {
+			t.Fatalf("%s: no --%s flag", c.CommandPath(), name)
+		}
+		return len(f.Annotations[cobra.BashCompOneRequiredFlag]) == 1
+	}
+	sp := pinnedSpec(t)
+	byOp := commandsByOperation(testRoot(t, sp, "http://unused.invalid", fastCfg()))
+	var required int
+	for _, op := range sp.Operations {
+		c := byOp[op.ID]
+		for _, q := range op.Query {
+			if got := isRequired(c, q.Name); got != q.Required {
+				t.Errorf("%s --%s: required = %v, want %v", op.ID, q.Name, got, q.Required)
+			}
+		}
+		if op.Body == nil {
+			continue
+		}
+		if op.Body.HasID && isRequired(c, "id") {
+			t.Errorf("%s: --id must not be required", op.ID)
+		}
+		if op.Body.Linkage && !isRequired(c, linkageFlag) {
+			t.Errorf("%s: --%s must be required", op.ID, linkageFlag)
+		}
+		for _, f := range op.Body.Fields {
+			want := f.Required && !f.HasDefault
+			if got := isRequired(c, f.Name); got != want {
+				t.Errorf("%s --%s: required = %v, want %v", op.ID, f.Name, got, want)
+			}
+			if want {
+				required++
+			}
+		}
+	}
+	if required == 0 {
+		t.Error("the pinned contract has no required body field to check")
 	}
 }

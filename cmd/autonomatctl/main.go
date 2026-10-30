@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dotdevlabs/ctlkit/pkg/airef"
 	"github.com/dotdevlabs/ctlkit/pkg/clierror"
 	"github.com/dotdevlabs/ctlkit/pkg/config"
 	"github.com/dotdevlabs/ctlkit/pkg/ctxutil"
@@ -52,6 +53,9 @@ func normalize(err error) error {
 	if _, ok := err.(*clierror.CLIError); ok {
 		return err
 	}
+	if strings.HasPrefix(err.Error(), "required flag(s)") {
+		return clierror.New(clierror.CodeUsage, err.Error(), "see the command's --help")
+	}
 	if strings.HasPrefix(err.Error(), "unknown command") {
 		return clierror.New(clierror.CodeUsage, err.Error(), "run 'autonomatctl ai' for the command reference")
 	}
@@ -72,13 +76,12 @@ func buildRoot(sp *spec.Spec) (*cobra.Command, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot generate commands from the contract: %w", err)
 	}
-	wfs := workflows()
 	cmd := root.New(root.BuildConfig{
 		Product:   product,
 		Short:     "CLI for Autonomat, generated from its OpenAPI contract",
 		Version:   ver,
 		Commands:  append(cmds, schema.NewCmd()),
-		Workflows: wfs,
+		Workflows: workflows(),
 	})
 	if f := cmd.PersistentFlags().Lookup("json"); f != nil {
 		f.Usage = "Print the raw JSON:API response document (errors body on failure)"
@@ -109,13 +112,6 @@ func buildRoot(sp *spec.Spec) (*cobra.Command, error) {
 		return nil
 	}
 
-	for _, sub := range cmd.Commands() {
-		if sub.Name() == "ai" {
-			cmd.RemoveCommand(sub)
-			break
-		}
-	}
-	cmd.AddCommand(newAICmd(ver.Version, wfs))
 	return cmd, nil
 }
 
@@ -144,4 +140,53 @@ func envContext(c *cobra.Command, base, tok string) (ctx context.Context) {
 	gf.Verbose, _ = f.GetBool("verbose")
 	ctx = ctxutil.WithGlobalFlags(c.Context(), gf)
 	return ctxutil.WithActiveContext(ctx, &config.Context{BaseURL: base, Token: tok})
+}
+
+func workflows() []airef.Workflow {
+	return []airef.Workflow{
+		{
+			Name:        "Triage work items",
+			Description: "List open work items as JSON, then read one in full.",
+			Steps: []string{
+				`autonomatctl work-items list --q 'status:open' --json`,
+				`autonomatctl work-items get <id> --json`,
+			},
+		},
+		{
+			Name:        "Create a work item and start an execution",
+			Description: "Create a work item, then create an execution for it. The work item id is in data.id of the first response.",
+			Steps: []string{
+				`autonomatctl work-items create --item_type report --title "Quarterly review" --source_kind human --status open --json`,
+				`autonomatctl work-items executions create <work_item_id> --state pending --json`,
+			},
+		},
+		{
+			Name:        "Read every page of a collection",
+			Description: "List commands return one page; --all follows links.next (the CLI never builds page URLs) and merges the pages into one document.",
+			Steps: []string{
+				`autonomatctl work-items list --all --json`,
+			},
+		},
+		{
+			Name:        "Preview a write",
+			Description: "--dry-run prints the method, URL and body that would be sent, with the token redacted, and sends nothing.",
+			Steps: []string{
+				`autonomatctl work-items create --item_type report --title "Draft" --source_kind human --status open --dry-run`,
+			},
+		},
+		{
+			Name:        "Run as an agent with a run-scoped token",
+			Description: "No stored context is needed when the base URL and token come from the environment.",
+			Steps: []string{
+				`AUTONOMATCTL_BASE_URL=https://autonomat.example AUTONOMATCTL_TOKEN=<run-token> autonomatctl status get --json`,
+			},
+		},
+		{
+			Name:        "Check which contract this binary speaks",
+			Description: "Prints the pinned API contract version and the commit it was synced from.",
+			Steps: []string{
+				`autonomatctl schema --json`,
+			},
+		},
+	}
 }
