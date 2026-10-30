@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "1.12.0"
+  version: "1.16.0"
 components:
   securitySchemes:
     apiToken:
@@ -316,6 +316,81 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/WorkItemResource"
+    WorkItemCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [item_type, title, product_id, workable_type, workable_id]
+      description: >
+        What a work item is created from. A work item belongs to a product and to a workable (an initiative or a
+        refinement): `product_id`, `workable_type` and `workable_id` are all required. `source_kind` and `status`
+        are optional for an account token (they default to `api` and `open`); a run token sets only item_type,
+        title, body, tags, product_id and the workable, the rest is fixed by the run.
+      properties:
+        item_type:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        source_kind:
+          type: string
+          default: api
+          description: Origin of the item. Defaults to `api`. Ignored for a run token (always `run`).
+        source_ref:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [open, closed, cancelled, queued, sent, running, finished, failed]
+          default: open
+          description: Defaults to `open`. Ignored for a run token (always `open`).
+        dispatch_reason:
+          type: string
+          nullable: true
+        parent_id:
+          type: integer
+          nullable: true
+        merged_into_id:
+          type: integer
+          nullable: true
+        connection_id:
+          type: string
+          nullable: true
+        agent_role_id:
+          type: string
+          nullable: true
+        product_id:
+          type: integer
+          description: The product (of the account) the work belongs to.
+        workable_type:
+          type: string
+          enum: [Initiative, Refinement]
+          description: The kind of record the work belongs to. Required together with `workable_id`.
+        workable_id:
+          type: integer
+          description: The id of the initiative or refinement named by `workable_type`.
+    WorkItemCreateResource:
+      type: object
+      additionalProperties: false
+      required: [attributes]
+      properties:
+        type:
+          type: string
+          enum: [work-items]
+        attributes:
+          $ref: "#/components/schemas/WorkItemCreateAttributes"
+    WorkItemCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/WorkItemCreateResource"
     WorkItemsDocument:
       type: object
       additionalProperties: false
@@ -1270,6 +1345,10 @@ components:
                     type: array
                     items:
                       type: string
+                  allowed_hosts_from:
+                    type: string
+                    enum: [product_live_urls]
+                    description: "`product_live_urls`: at run-build time the allowed hosts are the static `allowed_hosts` plus the hosts of every active product's site-kind `external_refs` url in the account."
                   max_body_bytes:
                     type: integer
                   env:
@@ -1283,7 +1362,7 @@ components:
                   send_request_headers:
                     type: boolean
                     description: "http credential mapping: whether the connection's request headers are part of `credentials.headers`."
-                description: Always carries `kind` (equal to `interface`). For http, includes optional `allowed_hosts` and `max_body_bytes` (response body cap).
+                description: "Always carries `kind` (equal to `interface`). For http, includes optional `allowed_hosts` (with `allowed_hosts_from` set to `product_live_urls` the payload carries the resolved list) and `max_body_bytes` (response body cap)."
               credentials:
                 type: object
                 additionalProperties: false
@@ -1454,11 +1533,45 @@ components:
             attributes:
               type: object
               additionalProperties: false
+              description: >
+                Only the given parts change; give at least one and none may be blank. An operator-owned pending
+                item must keep every part the account requires of its category (`GET /inbox_requirements`);
+                a missing or blank required part is a 422 with one `source.pointer` per part.
               properties:
+                title:
+                  type: string
+                question:
+                  type: string
+                  description: The decision to make, as one question (decision items).
+                context:
+                  type: string
+                  description: What a person needs to know to answer or act.
+                options:
+                  $ref: "#/components/schemas/InboxOptions"
+                steps:
+                  type: string
+                  description: The exact actions, systems, URLs and values (external_action and access items).
+                request:
+                  type: string
                 reason:
                   type: string
+                  description: Why a person is needed.
+                unblocks:
+                  type: string
+                  description: What the item unblocks once it is handled.
                 evidence:
                   type: string
+                recommendation:
+                  type: string
+                  description: The key of the recommended option (decision items).
+                continuation:
+                  type: string
+                  description: What Autonomat does after the item is resolved or marked complete, and how it checks the result.
+                denial_continuation:
+                  type: string
+                cost_of_waiting:
+                  type: string
+                  description: What delay costs.
     RunInboxResolutionAttributes:
       type: object
       additionalProperties: false
@@ -1721,6 +1834,7 @@ components:
             attributes:
               type: object
               additionalProperties: false
+              required: [body]
               properties:
                 body:
                   type: string
@@ -2017,6 +2131,30 @@ components:
           type: string
         enabled:
           type: boolean
+    PolicyCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [key]
+      description: "`key` is required on create. `archived_at` is not writable; archive with DELETE."
+      properties:
+        key:
+          type: string
+        applies_when:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        requires:
+          type: string
+        attempt_limit:
+          type: integer
+        time_limit:
+          type: integer
+        owner_node:
+          type: string
+        body:
+          type: string
+        enabled:
+          type: boolean
     PolicyWriteDocument:
       type: object
       additionalProperties: false
@@ -2032,6 +2170,21 @@ components:
               enum: [policies]
             attributes:
               $ref: "#/components/schemas/PolicyWriteAttributes"
+    PolicyCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [policies]
+            attributes:
+              $ref: "#/components/schemas/PolicyCreateAttributes"
     CapabilityIdentifier:
       type: object
       additionalProperties: false
@@ -2301,6 +2454,42 @@ components:
                 type: string
               value:
                 type: string
+    ConnectionCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [name, kind]
+      description: "`name` is required on create, as are the fields its kind needs (a credential for integrations; provider, credential_kind and secret for `model`). `kind` is accepted on create only. A blank credential, secret or refresh_value on update keeps the stored value. `state` and `last_error` are never accepted."
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [github, sentry, loopcontrol, clustercontrol, terraform_cloud, kubernetes, loki, grafana, billingcontrol, model]
+        provider:
+          type: string
+        credential_kind:
+          type: string
+        expires_at:
+          type: string
+        endpoint_url:
+          type: string
+        credential:
+          type: string
+        secret:
+          type: string
+        refresh_value:
+          type: string
+        request_headers:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name:
+                type: string
+              value:
+                type: string
     ConnectionWriteDocument:
       type: object
       additionalProperties: false
@@ -2316,6 +2505,21 @@ components:
               enum: [connections]
             attributes:
               $ref: "#/components/schemas/ConnectionWriteAttributes"
+    ConnectionCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [connections]
+            attributes:
+              $ref: "#/components/schemas/ConnectionCreateAttributes"
     ModelCredentialAttributes:
       type: object
       additionalProperties: false
@@ -2374,7 +2578,7 @@ components:
     CapabilityAttributes:
       type: object
       additionalProperties: false
-      required: [key, invocation]
+      required: [key]
       properties:
         key:
           type: string
@@ -2403,6 +2607,10 @@ components:
               type: array
               items:
                 type: string
+            allowed_hosts_from:
+              type: string
+              enum: [product_live_urls]
+              description: "`product_live_urls`: at run-build time the allowed hosts are the static `allowed_hosts` plus the hosts of every active product's site-kind `external_refs` url in the account."
             max_body_bytes:
               type: integer
             env:
@@ -2488,7 +2696,7 @@ components:
     AgentRoleAttributes:
       type: object
       additionalProperties: false
-      required: [title]
+      required: [title, key]
       properties:
         title:
           type: string
@@ -2782,6 +2990,135 @@ components:
         name:
           type: string
           nullable: true
+    InboxOption:
+      type: object
+      additionalProperties: false
+      required: [key, label, consequence]
+      properties:
+        key:
+          type: string
+          description: Unique within the item; a decision resolution records the chosen key.
+        label:
+          type: string
+        consequence:
+          type: string
+          description: What happens when this option is chosen.
+    InboxOptions:
+      type: array
+      description: >
+        The choices of a decision, each `{key, label, consequence}` with a unique key. When the account requires
+        `options` for the category it must hold 2 to 4 options, each with a consequence.
+      items:
+        $ref: "#/components/schemas/InboxOption"
+    InboxItemCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [inbox-items]
+            attributes:
+              type: object
+              additionalProperties: false
+              required: [category]
+              description: >
+                Files an operator-owned pending item. Which parts a category needs is account data
+                (`GET /inbox_requirements`). The defaults are decision: question, context, options (2 to 4,
+                each with a consequence), recommendation (naming an option key), evidence, cost_of_waiting;
+                external_action and access: steps, reason, unblocks, evidence, continuation; approval: request,
+                reason; information, review and attestation: request, context, evidence, continuation.
+                A missing or blank required part is a 422 with one `source.pointer` per part.
+              properties:
+                category:
+                  type: string
+                  enum: [decision, approval, access, information, review, attestation, external_action]
+                cause_key:
+                  type: string
+                  description: Identifies the cause; a second item with the same key is a 422. Generated when omitted.
+                title:
+                  type: string
+                question:
+                  type: string
+                  description: The decision to make, as one question (decision items).
+                context:
+                  type: string
+                  description: What a person needs to know to answer or act.
+                options:
+                  $ref: "#/components/schemas/InboxOptions"
+                steps:
+                  type: string
+                  description: The exact actions, systems, URLs and values (external_action and access items).
+                request:
+                  type: string
+                reason:
+                  type: string
+                  description: Why a person is needed.
+                unblocks:
+                  type: string
+                  description: What the item unblocks once it is handled.
+                evidence:
+                  type: string
+                recommendation:
+                  type: string
+                  description: The key of the recommended option (decision items).
+                continuation:
+                  type: string
+                  description: What Autonomat does after the item is resolved or marked complete, and how it checks the result.
+                denial_continuation:
+                  type: string
+                cost_of_waiting:
+                  type: string
+                  description: What delay costs.
+    InboxRequirementsAttributes:
+      type: object
+      additionalProperties: false
+      required: [decision, approval, access, information, review, attestation, external_action]
+      description: For each inbox item category, the parts an operator-owned pending item must have.
+      properties:
+        decision:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        approval:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        access:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        information:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        review:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        attestation:
+          $ref: "#/components/schemas/InboxRequiredParts"
+        external_action:
+          $ref: "#/components/schemas/InboxRequiredParts"
+    InboxRequiredParts:
+      type: array
+      items:
+        type: string
+        enum: [title, question, context, options, steps, request, reason, unblocks, evidence, recommendation, continuation, denial_continuation, cost_of_waiting]
+    InboxRequirementsResource:
+      type: object
+      additionalProperties: false
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [inbox-requirements]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/InboxRequirementsAttributes"
+    InboxRequirementsDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/InboxRequirementsResource"
     InboxItemResolution:
       type: object
       nullable: true
@@ -2792,7 +3129,7 @@ components:
           type: string
         outcome:
           type: string
-          enum: [approved, denied, supplied, completed]
+          enum: [approved, denied, supplied, completed, decided]
         state:
           type: string
           enum: [received, applied, failed]
@@ -2812,7 +3149,8 @@ components:
       type: object
       additionalProperties: false
       required: [title, status, category, owner, ref, request, reason, evidence, prepared_result, governing_policy,
-                 continuation, denial_continuation, cause_key, requested_value_label, call, call_result,
+                 continuation, denial_continuation, cause_key, requested_value_label, question, context, options,
+                 steps, unblocks, cost_of_waiting, recommendation, required_parts, call, call_result,
                  created_at, updated_at, origin, work_item_id, execution_id, resolution]
       properties:
         title:
@@ -2857,6 +3195,29 @@ components:
         requested_value_label:
           type: string
           nullable: true
+        question:
+          type: string
+          nullable: true
+        context:
+          type: string
+          nullable: true
+        options:
+          $ref: "#/components/schemas/InboxOptions"
+        steps:
+          type: string
+          nullable: true
+        unblocks:
+          type: string
+          nullable: true
+        cost_of_waiting:
+          type: string
+          nullable: true
+        recommendation:
+          type: string
+          nullable: true
+          description: The key of the recommended option of a decision.
+        required_parts:
+          $ref: "#/components/schemas/InboxRequiredParts"
         call:
           type: object
           nullable: true
@@ -3002,6 +3363,7 @@ components:
         received_on:
           type: string
           format: date
+          x-server-default: fields.period_end of a metric reading, else today
           description: Defaults to fields.period_end of a metric reading, else today.
         product_id:
           type: string
@@ -3721,6 +4083,7 @@ paths:
     patch:
       summary: Update account name and worker settings
       operationId: updateAccount
+      x-model: Account
       security:
         - apiToken: []
       requestBody:
@@ -3801,6 +4164,122 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Validation failed
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /inbox_requirements:
+    get:
+      summary: Get the account's inbox requirements
+      description: >
+        For each inbox item category, the parts an operator-owned pending item must have. All of it is
+        account data; the same document is `required_parts` on each Inbox item.
+      operationId: getInboxRequirements
+      security:
+        - apiToken: []
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+        - id: wrong_token_kind
+          status: 401
+          auth: webhookTokenAsApi
+      responses:
+        "200":
+          description: Inbox requirements document
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/InboxRequirementsDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update the account's inbox requirements
+      description: >
+        Omitted categories are left unchanged; a category given replaces its list of parts. An unknown
+        category or part, or a list of the wrong shape, returns 422 and changes nothing. The change applies to
+        the next item created or updated; no code change is involved.
+      operationId: updateInboxRequirements
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    attributes:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        decision:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+                        approval:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+                        access:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+                        information:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+                        review:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+                        attestation:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+                        external_action:
+                          $ref: "#/components/schemas/InboxRequiredParts"
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                information: [request, evidence]
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body:
+            data:
+              attributes:
+                information: [request]
+        - id: unknown_part
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                information: [colour]
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: "{not json"
+      responses:
+        "200":
+          description: The updated inbox requirements
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/InboxRequirementsDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Unknown category or part, or invalid input
           content:
             application/vnd.api+json:
               schema:
@@ -4021,8 +4500,12 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `status:open product:myproduct since:2026-10-01 sort:updated-desc`
             Unknown qualifiers return 422.
+            `status:` takes `open`, `closed`, `cancelled`, `queued`, `sent`, `running`, `finished` or `failed` (several values separated by commas, e.g. `status:open,failed`). Any other value, such as `blocked`, returns 422: blocked work is not a status.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: status
+              values: [open, closed, cancelled, queued, sent, running, finished, failed]
           schema:
             type: string
       x-scenarios:
@@ -4059,6 +4542,7 @@ paths:
     post:
       summary: Create a work item
       operationId: createWorkItem
+      x-model: WorkItem
       security:
         - apiToken: []
       requestBody:
@@ -4066,7 +4550,7 @@ paths:
         content:
           application/vnd.api+json:
             schema:
-              $ref: "#/components/schemas/WorkItemDocument"
+              $ref: "#/components/schemas/WorkItemCreateDocument"
       x-run-targets:
         - model: Product
           in: body
@@ -4218,6 +4702,7 @@ paths:
     patch:
       summary: Update a work item's title, status, owner and next action
       operationId: updateWorkItem
+      x-model: WorkItem
       security:
         - apiToken: []
       parameters:
@@ -4427,10 +4912,14 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Filter query supporting typed qualifiers. Example: `status:active product:node-product-alpha since:2026-10-01`.
             An unknown qualifier or invalid value returns 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: status
+              values: [draft, active, concluded, abandoned]
           schema:
             type: string
         - name: page[number]
@@ -4502,6 +4991,7 @@ paths:
     post:
       summary: Create an initiative
       operationId: createInitiative
+      x-model: Initiative
       security:
         - apiToken: []
       requestBody:
@@ -4687,6 +5177,7 @@ paths:
     patch:
       summary: Update an initiative
       operationId: updateInitiative
+      x-model: Initiative
       security:
         - apiToken: []
       parameters:
@@ -4910,6 +5401,9 @@ paths:
             An unknown qualifier or invalid value returns 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: status
+              values: [active, complete, archived]
           schema:
             type: string
         - name: page[number]
@@ -4981,6 +5475,7 @@ paths:
     post:
       summary: Create a refinement under a product
       operationId: createRefinement
+      x-model: Refinement
       security:
         - apiToken: []
       requestBody:
@@ -5175,6 +5670,7 @@ paths:
     patch:
       summary: Update a refinement
       operationId: updateRefinement
+      x-model: Refinement
       security:
         - apiToken: []
       parameters:
@@ -5556,6 +6052,13 @@ paths:
             Unknown qualifiers and invalid values return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: status
+              values: [pending, completed]
+            - key: category
+              values: [decision, approval, access, information, review, attestation, external_action]
+            - key: owner
+              values: [approval, operator]
           schema:
             type: string
         - name: "page[number]"
@@ -5619,6 +6122,80 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: File an Inbox item for a person to handle
+      description: >
+        Files an operator-owned pending item. The parts a category must have are account data, read and
+        edited with `GET`/`PATCH /inbox_requirements`; the defaults are decision: question, context, options
+        (2 to 4, each with a consequence), recommendation (naming an option key), evidence, cost_of_waiting;
+        external_action and access: steps, reason, unblocks, evidence, continuation (what Autonomat does after
+        the item is marked complete, and how it checks the result); approval: request, reason; information,
+        review and attestation: request, context, evidence, continuation. A missing or blank required part is a
+        422 whose errors list every missing part, each with `source.pointer` `/data/attributes/<part>`; so is
+        a recommendation that names no option, a malformed option and a duplicate `cause_key`. A run token files
+        the item at its node; an account token files it for the account.
+      operationId: createInboxItem
+      x-model: InboxItem
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/InboxItemCreateDocument"
+      x-scenarios:
+        - id: created_by_run
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "decision", "question": "Which domain should the product use?", "context": "The product has no public domain yet.", "options": [{"key": "a", "label": "example.com", "consequence": "Launch under the main brand."}, {"key": "b", "label": "example.app", "consequence": "Launch under a separate brand."}], "recommendation": "a", "evidence": "Both domains are available at the registrar.", "cost_of_waiting": "Launch stays blocked."}}}
+        - id: created_by_account
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "decision", "question": "Which domain should the product use?", "context": "The product has no public domain yet.", "options": [{"key": "a", "label": "example.com", "consequence": "Launch under the main brand."}, {"key": "b", "label": "example.app", "consequence": "Launch under a separate brand."}], "recommendation": "a", "evidence": "Both domains are available at the registrar.", "cost_of_waiting": "Launch stays blocked."}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "decision", "question": "Which domain should the product use?", "context": "The product has no public domain yet.", "options": [{"key": "a", "label": "example.com", "consequence": "Launch under the main brand."}, {"key": "b", "label": "example.app", "consequence": "Launch under a separate brand."}], "recommendation": "a", "evidence": "Both domains are available at the registrar.", "cost_of_waiting": "Launch stays blocked."}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "decision", "question": "Which domain should the product use?", "context": "The product has no public domain yet.", "options": [{"key": "a", "label": "example.com", "consequence": "Launch under the main brand."}, {"key": "b", "label": "example.app", "consequence": "Launch under a separate brand."}], "recommendation": "a", "evidence": "Both domains are available at the registrar.", "cost_of_waiting": "Launch stays blocked."}}}
+        - id: missing_parts
+          status: 422
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "decision", "title": "Confirm the domain"}}}
+        - id: unknown_category
+          status: 422
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "chore"}}}
+      responses:
+        "201":
+          description: The filed Inbox item
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/InboxItemDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: >
+            A required part is missing or blank (one error per part), an option or the recommendation is
+            invalid, the category is unknown or the cause_key is taken
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /signals:
     get:
       summary: List signals
@@ -5634,6 +6211,9 @@ paths:
             Unknown qualifiers and invalid values return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: kind
+              values: [activity, market, research, portfolio, feedback, usage, sales, deploy]
           schema:
             type: string
         - name: "page[number]"
@@ -5700,6 +6280,7 @@ paths:
     post:
       summary: Create a signal (a metric reading is a signal with the metric, value and period in its fields)
       operationId: createSignal
+      x-model: IncomingSignal
       security:
         - apiToken: []
       requestBody:
@@ -5876,6 +6457,11 @@ paths:
             Unknown qualifiers and invalid values return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: kind
+              values: [execution, tool_invocation, record_change, signal, inbox_resolution, document_change]
+            - key: subject
+              values: [Execution, ExecutionAction, InboxItem, WorkItem, Product, Initiative, User, Refinement, DocumentRevision, Message, IncomingSignal]
           schema:
             type: string
         - name: "page[number]"
@@ -6096,6 +6682,7 @@ paths:
     patch:
       summary: Update a pending Inbox item's reason and evidence (run token)
       operationId: updateInboxItem
+      x-model: InboxItem
       security:
         - apiToken: []
       parameters:
@@ -6695,6 +7282,9 @@ paths:
           description: |
             Filter query supporting typed qualifiers: `state:proposed|accepted|rejected`, `since:<date>` (created), `sort:revision-asc|created-asc`.
             Unknown qualifiers or invalid values return 422.
+          x-qualifiers:
+            - key: state
+              values: [proposed, accepted, rejected]
           schema:
             type: string
         - name: page[number]
@@ -6818,6 +7408,7 @@ paths:
     post:
       summary: Propose a revision of a product document (run token)
       operationId: createProductDocumentRevision
+      x-model: DocumentRevision
       security:
         - apiToken: []
       parameters:
@@ -6943,8 +7534,14 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Filter query supporting typed qualifiers: `stage:development|live|sunset`, `health:healthy|at_risk|unhealthy|unknown`, `name:<text>`, `since:<date>` / `until:<date>` (last activity), `sort:name-asc|activity-desc|created-asc`. Free text searches names. Example: `stage:live health:at_risk since:2026-10-01`.
             Unknown qualifiers or invalid values return 422.
+          x-qualifiers:
+            - key: stage
+              values: [development, live, sunset]
+            - key: health
+              values: [healthy, at_risk, unhealthy, unknown]
           schema:
             type: string
         - name: page[number]
@@ -7109,6 +7706,7 @@ paths:
     patch:
       summary: Update a product's operator-editable fields
       operationId: updateProduct
+      x-model: Product
       security:
         - apiToken: []
       parameters:
@@ -7350,6 +7948,11 @@ paths:
           description: |
             Filter query supporting typed qualifiers: `kind:icp|prd|drd|trd|mrd|rrd|ord|lrd`, `state:missing|needs_review|accepted|draft`, `since:<date>` (updated), `sort:kind-asc|updated-asc`.
             Unknown qualifiers or invalid values return 422.
+          x-qualifiers:
+            - key: kind
+              values: [icp, prd, drd, trd, mrd, rrd, ord, lrd, strategy]
+            - key: state
+              values: [missing, needs_review, accepted, draft]
           schema:
             type: string
         - name: page[number]
@@ -7703,6 +8306,9 @@ paths:
           description: |
             Typed filter query. Example: `state:accepted sort:number-desc`.
             Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: state
+              values: [proposed, accepted, rejected]
           schema:
             type: string
         - name: "page[number]"
@@ -7812,6 +8418,7 @@ paths:
     post:
       summary: Propose a revision of a standard (run token)
       operationId: createStandardRevision
+      x-model: DocumentRevision
       security:
         - apiToken: []
       parameters:
@@ -7921,8 +8528,16 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Typed filter query. Example: `kind:decision status:active since:2026-10-01 sort:key-asc`.
             Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: kind
+              values: [decision, procedure]
+            - key: level
+              values: [mandatory, default]
+            - key: status
+              values: [active, superseded]
           schema:
             type: string
         - name: "page[number]"
@@ -8177,6 +8792,7 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Typed filter query. Example: `enabled:true since:2026-10-01 sort:key-asc`. Archived policies are not listed.
             Unknown qualifiers or values return 422.
           schema:
@@ -8253,6 +8869,7 @@ paths:
     post:
       summary: Create a policy
       operationId: createPolicy
+      x-model: Policy
       security:
         - apiToken: []
       requestBody:
@@ -8260,7 +8877,7 @@ paths:
         content:
           application/vnd.api+json:
             schema:
-              $ref: "#/components/schemas/PolicyWriteDocument"
+              $ref: "#/components/schemas/PolicyCreateDocument"
       x-scenarios:
         - id: created
           status: 201
@@ -8399,6 +9016,7 @@ paths:
     patch:
       summary: Update a policy
       operationId: updatePolicy
+      x-model: Policy
       security:
         - apiToken: []
       parameters:
@@ -8603,8 +9221,12 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Typed filter query. Example: `interface:cli sort:key-asc`. Returns resource identifiers.
             Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: interface
+              values: [cli, http, builtin, requested_action, unknown]
           schema:
             type: string
         - name: "page[number]"
@@ -8940,8 +9562,12 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Typed filter query. Example: `kind:standard enabled:true since:2026-10-01 sort:key-asc`. Archived schedules are not listed.
             Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: kind
+              values: [standard, reality-review]
           schema:
             type: string
         - name: "page[number]"
@@ -9093,6 +9719,7 @@ paths:
     patch:
       summary: Update a schedule's enabled flag, timing, description and steps
       operationId: updateSchedule
+      x-model: Schedule
       security:
         - apiToken: []
       parameters:
@@ -9222,6 +9849,11 @@ paths:
           description: |
             Typed filter query. Example: `kind:github state:verified since:2026-10-01 sort:name-asc`. Removed connections are not listed.
             Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: kind
+              values: [github, sentry, loopcontrol, clustercontrol, terraform_cloud, kubernetes, loki, grafana, billingcontrol, model]
+            - key: state
+              values: [saved, checking, verified, failed, not_live, removed]
           schema:
             type: string
         - name: "page[number]"
@@ -9296,6 +9928,7 @@ paths:
     post:
       summary: Create a connection (credential values are write-only)
       operationId: createConnection
+      x-model: Connection
       security:
         - apiToken: []
       requestBody:
@@ -9303,7 +9936,7 @@ paths:
         content:
           application/vnd.api+json:
             schema:
-              $ref: "#/components/schemas/ConnectionWriteDocument"
+              $ref: "#/components/schemas/ConnectionCreateDocument"
       x-scenarios:
         - id: created
           status: 201
@@ -9442,6 +10075,7 @@ paths:
     patch:
       summary: Update a connection's metadata or credential values
       operationId: updateConnection
+      x-model: Connection
       security:
         - apiToken: []
       parameters:
@@ -9645,6 +10279,9 @@ paths:
             Qualifiers: `schedule_run:<id>` (the schedule run id), `step:<n>` (1-based, as shown to agents; accepts comparisons and ranges such as `step:1..3`), `node:<node key>` (e.g. `root`, `product:alpha`, `initiative:launch`), `state:<state>` (queued, sent, running, finished, completed, failed), `kind:<kind>` (e.g. schedule, answer, approved_call), `since:<date>` (executions created on or after the date), and `sort:created-asc|created-desc|started-asc|started-desc`. Prefix a qualifier with `-` to negate it; comma-separated values are alternatives.
             Unknown qualifiers and invalid values return 422 with `source.parameter` `q`.
             A run token reads only the executions of its own node; the root run reads all of the account's executions.
+          x-qualifiers:
+            - key: state
+              values: [queued, sent, running, finished, completed, failed]
           schema:
             type: string
         - name: "page[number]"
@@ -10064,6 +10701,7 @@ paths:
     post:
       summary: Create a model credential
       operationId: createModelCredential
+      x-model: Connection
       security:
         - apiToken: []
       requestBody:
@@ -10193,6 +10831,7 @@ paths:
     patch:
       summary: Update a model credential
       operationId: updateModelCredential
+      x-model: Connection
       security:
         - apiToken: []
       parameters:
@@ -10358,11 +10997,15 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Filter query supporting typed qualifiers.
             Example: `interface:cli since:2026-10-01 sort:key-asc`
             Unknown qualifiers return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: interface
+              values: [cli, http, builtin, requested_action, unknown]
           schema:
             type: string
       x-scenarios:
@@ -10399,6 +11042,7 @@ paths:
     post:
       summary: Create a capability
       operationId: createCapability
+      x-model: Capability
       security:
         - apiToken: []
       requestBody:
@@ -10530,6 +11174,7 @@ paths:
     patch:
       summary: Update a capability
       operationId: updateCapability
+      x-model: Capability
       security:
         - apiToken: []
       parameters:
@@ -10642,6 +11287,7 @@ paths:
     put:
       summary: Replace a capability (full update)
       operationId: replaceCapability
+      x-model: Capability
       security:
         - apiToken: []
       parameters:
@@ -10788,6 +11434,7 @@ paths:
           in: query
           required: false
           description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
             Filter query supporting typed qualifiers.
             Example: `sort:title-asc since:2026-10-01`
             Unknown qualifiers return 422.
@@ -10829,6 +11476,7 @@ paths:
     post:
       summary: Create an agent role
       operationId: createAgentRole
+      x-model: AgentRole
       security:
         - apiToken: []
       requestBody:
@@ -10933,6 +11581,7 @@ paths:
     patch:
       summary: Update an agent role (including capability selection)
       operationId: updateAgentRole
+      x-model: AgentRole
       security:
         - apiToken: []
       parameters:
@@ -11012,6 +11661,7 @@ paths:
     put:
       summary: Replace an agent role (full update, including capability selection)
       operationId: replaceAgentRole
+      x-model: AgentRole
       security:
         - apiToken: []
       parameters:
@@ -11177,6 +11827,7 @@ paths:
     post:
       summary: Create an operator message; unscoped messages trigger autonomous dispatch
       operationId: createOperatorMessage
+      x-model: Message
       security:
         - apiToken: []
       requestBody:
@@ -11713,6 +12364,9 @@ paths:
             Unknown qualifiers return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: context_type
+              values: [Product, Initiative, Refinement, WorkItem, InboxItem]
           schema:
             type: string
         - name: page[number]
@@ -11789,6 +12443,7 @@ paths:
     post:
       summary: Create a conversation, optionally about a record
       operationId: createConversation
+      x-model: Conversation
       security:
         - apiToken: []
       requestBody:
@@ -11968,6 +12623,9 @@ paths:
             Unknown qualifiers return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
             An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
+          x-qualifiers:
+            - key: role
+              values: [operator, assistant]
           schema:
             type: string
         - name: page[number]
@@ -12072,6 +12730,7 @@ paths:
     post:
       summary: Create an operator message; this starts the answer run
       operationId: createConversationMessage
+      x-model: Message
       security:
         - apiToken: []
       parameters:

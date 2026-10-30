@@ -28,13 +28,13 @@ var newOps = []struct {
 	{"getStatus", "status get", "GET", "/status", "", nil, nil, nil},
 	{"listWorkItems", "work-items list", "GET", "/work_items", "", nil, nil, nil},
 	{"listExecutions", "executions list", "GET", "/executions", "", nil, nil, nil},
-	{"createWorkItem", "work-items create", "POST", "/work_items", "work-items", []string{"item_type", "title", "source_kind", "status"},
-		[]string{"item_type", "title", "body", "tags", "source_kind", "source_ref", "status", "dispatch_reason", "next_action", "ref", "intake_status", "parent_id", "merged_into_id", "connection_id", "agent_role_id", "product_id", "workable_type", "workable_id", "created_at", "updated_at"}, nil},
+	{"createWorkItem", "work-items create", "POST", "/work_items", "work-items", []string{"item_type", "title", "product_id", "workable_type", "workable_id"},
+		[]string{"item_type", "title", "body", "tags", "source_kind", "source_ref", "status", "dispatch_reason", "parent_id", "merged_into_id", "connection_id", "agent_role_id", "product_id", "workable_type", "workable_id"}, nil},
 	{"getWorkItem", "work-items get", "GET", "/work_items/{id}", "", nil, nil, []string{"w1"}},
 	{"createExecution", "work-items executions create", "POST", "/work_items/{work_item_id}/executions", "executions", []string{"state"},
 		[]string{"state", "agent_role_id", "started_at", "finished_at", "usage", "connection_id", "applied_correction_ids", "hatchet_run_id", "requested_action_errors"}, []string{"w1"}},
 	{"sunsetProduct", "products sunset", "POST", "/products/{product_id}/sunset", "", nil, nil, []string{"p1"}},
-	{"updateInboxItem", "inbox-items update", "PATCH", "/inbox_items/{id}", "inbox-items", nil, []string{"reason", "evidence"}, []string{"i1"}},
+	{"updateInboxItem", "inbox-items update", "PATCH", "/inbox_items/{id}", "inbox-items", nil, []string{"title", "question", "context", "options", "steps", "request", "reason", "unblocks", "evidence", "recommendation", "continuation", "denial_continuation", "cost_of_waiting"}, []string{"i1"}},
 	{"createInboxItemResolution", "inbox-items resolution create", "POST", "/inbox_items/{inbox_item_id}/resolution", "inbox-item-resolutions", nil, []string{"evidence"}, []string{"i1"}},
 	{"createPendingCall", "pending-calls create", "POST", "/pending_calls", "pending-calls", nil, []string{"capability", "arguments", "reason"}, nil},
 	{"dispatchWorkItem", "work-items dispatch", "POST", "/work_items/{work_item_id}/dispatch", "", nil, nil, []string{"w1"}},
@@ -58,6 +58,10 @@ var newOps = []struct {
 	{"createConversationMessage", "conversations messages create", "POST", "/conversations/{conversation_id}/messages", "messages", []string{"body"}, []string{"body"}, []string{"a1"}},
 	{"getConversation", "conversations get", "GET", "/conversations/{id}", "", nil, nil, []string{"a1"}},
 	{"listInboxItems", "inbox-items list", "GET", "/inbox_items", "", nil, nil, nil},
+	{"getInboxRequirements", "inbox-requirements get", "GET", "/inbox_requirements", "", nil, nil, nil},
+	{"updateInboxRequirements", "inbox-requirements update", "PATCH", "/inbox_requirements", "", nil, []string{"decision", "approval", "access", "information", "review", "attestation", "external_action"}, nil},
+	{"createInboxItem", "inbox-items create", "POST", "/inbox_items", "inbox-items", []string{"category"},
+		[]string{"category", "cause_key", "title", "question", "context", "options", "steps", "request", "reason", "unblocks", "evidence", "recommendation", "continuation", "denial_continuation", "cost_of_waiting"}, nil},
 	{"getInboxItem", "inbox-items get", "GET", "/inbox_items/{id}", "", nil, nil, []string{"a1"}},
 	{"listInitiatives", "initiatives list", "GET", "/initiatives", "", nil, nil, nil},
 	{"createInitiative", "initiatives create", "POST", "/initiatives", "", []string{"key", "title"}, []string{"key", "title", "status", "automatic_dispatch_paused", "daily_budget_cents", "started_on", "target_on", "concluded_on", "product_ids"}, nil},
@@ -127,8 +131,8 @@ func TestNewContractOperations(t *testing.T) {
 				}
 				for _, f := range op.Body.Fields {
 					names = append(names, f.Name)
-					if cmd.Flags().Lookup(f.Name) == nil {
-						t.Errorf("missing flag --%s", f.Name)
+					if cmd.Flags().Lookup(flagOf(f.Name)) == nil {
+						t.Errorf("missing flag --%s", flagOf(f.Name))
 					}
 				}
 			}

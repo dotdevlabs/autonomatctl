@@ -18,6 +18,9 @@ import (
 // for one documented input.
 func sample(name, typ, item string, enum []string) (args []string, want any) {
 	flag := "--" + name
+	if bf := bodyFlag(name); bf != "" {
+		flag = "--" + bf
+	}
 	switch {
 	case typ == "string" && len(enum) > 0:
 		return []string{flag, enum[0]}, enum[0]
@@ -36,6 +39,14 @@ func sample(name, typ, item string, enum []string) (args []string, want any) {
 	default:
 		return []string{flag, `{"k":1}`}, map[string]any{"k": float64(1)}
 	}
+}
+
+// flagOf is the CLI flag of a body field.
+func flagOf(name string) string {
+	if bf := bodyFlag(name); bf != "" {
+		return bf
+	}
+	return name
 }
 
 func commandsByOperation(root *cobra.Command) map[string]*cobra.Command {
@@ -332,7 +343,7 @@ func TestRequiredInputsAreRequiredFlags(t *testing.T) {
 		}
 		for _, f := range op.Body.Fields {
 			want := f.Required && !f.HasDefault
-			if got := isRequired(c, f.Name); got != want {
+			if got := isRequired(c, flagOf(f.Name)); got != want {
 				t.Errorf("%s --%s: required = %v, want %v", op.ID, f.Name, got, want)
 			}
 			if want {

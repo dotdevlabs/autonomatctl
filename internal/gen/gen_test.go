@@ -345,7 +345,7 @@ func TestBuildErrors(t *testing.T) {
 		"reserved flag":    {"openapi: 3.0.3\npaths:\n  /a:\n    get:\n      operationId: g\n      parameters: [{name: json, in: query, schema: {type: string}}]\n      responses: {}\n", Config{}},
 		"query/body clash": {"openapi: 3.0.3\npaths:\n  /a:\n    post:\n      operationId: g\n      parameters: [{name: x, in: query, schema: {type: string}}]\n      requestBody: {content: {application/vnd.api+json: {schema: {properties: {data: {properties: {attributes: {properties: {x: {type: string}}}}}}}}}}\n      responses: {}\n", Config{}},
 		"id clash":         {"openapi: 3.0.3\npaths:\n  /a:\n    post:\n      operationId: g\n      parameters: [{name: id, in: query, schema: {type: string}}]\n      requestBody: {content: {application/vnd.api+json: {schema: {properties: {data: {properties: {id: {type: string}}}}}}}}\n      responses: {}\n", Config{}},
-		"body field clash": {"openapi: 3.0.3\npaths:\n  /a:\n    post:\n      operationId: g\n      requestBody: {content: {application/vnd.api+json: {schema: {properties: {data: {properties: {attributes: {properties: {yes: {type: string}}}}}}}}}}\n      responses: {}\n", Config{}},
+		"body field clash": {"openapi: 3.0.3\npaths:\n  /a:\n    post:\n      operationId: g\n      requestBody: {content: {application/vnd.api+json: {schema: {properties: {data: {properties: {attributes: {properties: {yes: {type: string}, attr-yes: {type: string}}}}}}}}}}\n      responses: {}\n", Config{}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -185,7 +185,8 @@ func kindOf(typ, item string) fieldKind {
 
 // input is one documented value the user can supply.
 type input struct {
-	name     string
+	name     string // wire name in the contract
+	flag     string // CLI flag name when it differs from name (reserved collision)
 	kind     fieldKind
 	enum     []string
 	required bool
@@ -195,6 +196,26 @@ type input struct {
 	// flag: the default is sent when the flag is omitted.
 	def     any
 	sendDef bool
+}
+
+// flagName is the CLI flag carrying the input.
+func (in input) flagName() string {
+	if in.flag != "" {
+		return in.flag
+	}
+	return in.name
+}
+
+// bodyFlag names the flag for a body field. A field whose name is a reserved
+// flag (e.g. the inbox part "context" vs the global --context) is exposed as
+// --attr-<name> and still sent under its contract name.
+func bodyFlag(name string) string {
+	for _, r := range reservedFlags {
+		if r == name {
+			return "attr-" + name
+		}
+	}
+	return ""
 }
 
 var space = regexp.MustCompile(`\s+`)
@@ -211,6 +232,9 @@ func usage(desc string, in input) string {
 		d, _ := json.Marshal(in.def)
 		u = strings.TrimSpace(u + " (default " + string(d) + ")")
 	}
+	if in.flag != "" {
+		u = strings.TrimSpace(u + " (sent as the contract field " + in.name + ")")
+	}
 	if in.required {
 		u = strings.TrimSpace(u + " (required)")
 	}
@@ -223,20 +247,20 @@ func addFlag(fs *pflag.FlagSet, in input, desc string) {
 		if in.required {
 			// What cobra's MarkFlagRequired sets: cobra enforces it and ctlkit's
 			// ai reference reports required: true.
-			_ = fs.SetAnnotation(in.name, cobra.BashCompOneRequiredFlag, []string{"true"})
+			_ = fs.SetAnnotation(in.flagName(), cobra.BashCompOneRequiredFlag, []string{"true"})
 		}
 	}()
 	switch in.kind {
 	case kInt:
-		fs.Int64(in.name, 0, u)
+		fs.Int64(in.flagName(), 0, u)
 	case kNumber:
-		fs.Float64(in.name, 0, u)
+		fs.Float64(in.flagName(), 0, u)
 	case kBool:
-		fs.Bool(in.name, false, u)
+		fs.Bool(in.flagName(), false, u)
 	case kStrings:
-		fs.StringArray(in.name, nil, u)
+		fs.StringArray(in.flagName(), nil, u)
 	default:
-		fs.String(in.name, "", u)
+		fs.String(in.flagName(), "", u)
 	}
 }
 
@@ -283,17 +307,20 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 
 	var inputs []input
 	seen := map[string]bool{}
+	claimFlag := func(n string) error {
+		if seen[n] {
+			return fmt.Errorf("contract name %q is used twice (query and body)", n)
+		}
+		seen[n] = true
+		return nil
+	}
 	claim := func(n string) error {
 		for _, r := range reservedFlags {
 			if r == n {
 				return fmt.Errorf("contract field %q collides with the CLI flag --%s", n, n)
 			}
 		}
-		if seen[n] {
-			return fmt.Errorf("contract name %q is used twice (query and body)", n)
-		}
-		seen[n] = true
-		return nil
+		return claimFlag(n)
 	}
 	fs := cmd.Flags()
 	for _, q := range op.Query {
@@ -327,10 +354,17 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 			addFlag(fs, in, "Resource id (data.id)")
 		}
 		for _, f := range op.Body.Fields {
-			if err := claim(f.Name); err != nil {
+			flag := bodyFlag(f.Name)
+			var err error
+			if flag != "" {
+				err = claimFlag(flag)
+			} else {
+				err = claim(f.Name)
+			}
+			if err != nil {
 				return nil, err
 			}
-			in := input{name: f.Name, kind: kindOf(f.Type, f.ItemType), enum: f.Enum, required: f.Required, typ: f.Type}
+			in := input{name: f.Name, flag: flag, kind: kindOf(f.Type, f.ItemType), enum: f.Enum, required: f.Required, typ: f.Type}
 			if f.Required && f.HasDefault {
 				in.required, in.sendDef, in.def = false, true, f.Default
 			}
@@ -391,7 +425,7 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, a
 	attrs := map[string]any{}
 	var id *string
 	set := func(in input) (bool, any, error) {
-		if !c.Flags().Changed(in.name) {
+		if !c.Flags().Changed(in.flagName()) {
 			return false, nil, nil
 		}
 		v, err := value(c.Flags(), in)
@@ -468,24 +502,24 @@ func queryValues(v any) []string {
 // value reads a changed flag as its contract type, validating enums and JSON.
 func value(fs *pflag.FlagSet, in input) (any, error) {
 	bad := func(msg string) error {
-		return clierror.New(clierror.CodeUsage, fmt.Sprintf("--%s: %s", in.name, msg), "")
+		return clierror.New(clierror.CodeUsage, fmt.Sprintf("--%s: %s", in.flagName(), msg), "")
 	}
 	switch in.kind {
 	case kInt:
-		return fs.GetInt64(in.name)
+		return fs.GetInt64(in.flagName())
 	case kNumber:
-		return fs.GetFloat64(in.name)
+		return fs.GetFloat64(in.flagName())
 	case kBool:
-		v, _ := fs.GetBool(in.name)
+		v, _ := fs.GetBool(in.flagName())
 		if in.query {
 			return strconv.FormatBool(v), nil
 		}
 		return v, nil
 	case kStrings:
-		v, _ := fs.GetStringArray(in.name)
+		v, _ := fs.GetStringArray(in.flagName())
 		return v, nil
 	case kJSON:
-		raw, _ := fs.GetString(in.name)
+		raw, _ := fs.GetString(in.flagName())
 		if !json.Valid([]byte(raw)) {
 			return nil, bad("not valid JSON")
 		}
@@ -495,7 +529,7 @@ func value(fs *pflag.FlagSet, in input) (any, error) {
 		}
 		return json.RawMessage(raw), nil
 	}
-	v, _ := fs.GetString(in.name)
+	v, _ := fs.GetString(in.flagName())
 	if len(in.enum) > 0 && !contains(in.enum, v) {
 		return nil, bad(fmt.Sprintf("%q is not one of: %s", v, strings.Join(in.enum, ", ")))
 	}
