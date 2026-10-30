@@ -8,7 +8,7 @@ import (
 	"github.com/dotdevlabs/autonomatctl/internal/spec"
 )
 
-// newOps are the operations added to the contract in 1.2.0 and 1.7.0. Each row pins the
+// newOps are the operations added to the contract in 1.2.0, 1.7.0 and 1.12.0. Each row pins the
 // command, the request line and the exact attribute names the contract uses.
 var newOps = []struct {
 	id       string
@@ -27,6 +27,7 @@ var newOps = []struct {
 	{"getSpend", "spend get", "GET", "/spend", "", nil, nil, nil},
 	{"getStatus", "status get", "GET", "/status", "", nil, nil, nil},
 	{"listWorkItems", "work-items list", "GET", "/work_items", "", nil, nil, nil},
+	{"listExecutions", "executions list", "GET", "/executions", "", nil, nil, nil},
 	{"createWorkItem", "work-items create", "POST", "/work_items", "work-items", []string{"item_type", "title", "source_kind", "status"},
 		[]string{"item_type", "title", "body", "tags", "source_kind", "source_ref", "status", "dispatch_reason", "next_action", "ref", "intake_status", "parent_id", "merged_into_id", "connection_id", "agent_role_id", "product_id", "workable_type", "workable_id", "created_at", "updated_at"}, nil},
 	{"getWorkItem", "work-items get", "GET", "/work_items/{id}", "", nil, nil, []string{"w1"}},
