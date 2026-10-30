@@ -201,9 +201,6 @@ var space = regexp.MustCompile(`\s+`)
 
 func usage(desc string, in input) string {
 	u := space.ReplaceAllString(strings.TrimSpace(desc), " ")
-	if len(u) > 160 {
-		u = u[:157] + "..."
-	}
 	if in.kind == kJSON {
 		u = strings.TrimSpace(u + " (JSON " + in.typ + ")")
 	}
