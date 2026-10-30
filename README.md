@@ -29,6 +29,28 @@ webhook token are hidden from `--help` and omitted from the `ai` reference, but 
 Every generated command carries `operation_id`, `method` and `path` cobra annotations, which `ai --json` exposes
 under each command's `annotations`; required request fields are required flags (`required: true` in the reference).
 
+### Typed flags
+
+`ai --json` publishes each flag's constraints so a client can validate a call before making it:
+
+- `enum` lists the contract's allowed values (attribute and query parameter enums).
+- `schema` is the contract's JSON Schema for object and array-of-object flags (local `$ref`s inlined, `x-*`
+  extensions dropped; a recursive schema is emitted once under `$defs`). OpenAPI 3.0 `nullable` is kept as written.
+- Commands whose request documents `x-required-by-category` (inbox items) carry a `required_by_category`
+  annotation: compact JSON mapping each category to the parts it requires.
+
+List commands get one typed flag per documented `x-qualifiers` entry, named `--q-<key>`: `enum` and `sort` take the
+listed values (comma-separated for several), `date` takes `YYYY-MM-DD` with an optional `>=`, `>`, `<=`, `<` or a
+`from..to` range, `reference` takes a record id or key, `number` an integer, `text` free text, and `boolean` is a bool
+flag (`--q-is` sends `is:<value>`, `--q-is=false` sends `-is:<value>`). The command joins them, in contract order,
+and then any free `--q` text into the single `q` parameter:
+
+```
+autonomatctl work-items list --q-status open --q-product 12 --q 'free text'   # q=status:open product:12 free text
+```
+
+Invalid values are usage errors before any request is made.
+
 ### Output and exit codes
 
 - `--json` prints the raw JSON:API document exactly as the server sent it. On failure it prints the

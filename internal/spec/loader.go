@@ -46,6 +46,7 @@ func (l *loader) operation(path, method string, r *rawOp) (Operation, error) {
 			continue
 		}
 		typ := "string"
+		var enum []string
 		if p.Schema != nil {
 			s, err := l.resolve(p.Schema)
 			if err != nil {
@@ -54,8 +55,16 @@ func (l *loader) operation(path, method string, r *rawOp) (Operation, error) {
 			if s.Type != "" {
 				typ = s.Type
 			}
+			for _, e := range s.Enum {
+				enum = append(enum, e.Value)
+			}
 		}
-		op.Query = append(op.Query, Param{Name: p.Name, Type: typ, Description: strings.TrimSpace(p.Description), Required: p.Required})
+		quals, err := qualifiers(p.Qualifiers)
+		if err != nil {
+			return op, fmt.Errorf("parameter %s: %w", p.Name, err)
+		}
+		op.Query = append(op.Query, Param{Name: p.Name, Type: typ, Description: strings.TrimSpace(p.Description),
+			Required: p.Required, Enum: enum, Qualifiers: quals})
 	}
 
 	if r.RequestBody != nil {
@@ -162,6 +171,7 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.RequiredByCategory = attrs.RequiredByCategory
 	for _, name := range attrs.Properties.keys {
 		fs, err := l.resolve(attrs.Properties.m[name])
 		if err != nil {
@@ -191,6 +201,13 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 				return nil, fmt.Errorf("attribute %s items: %w", name, err)
 			}
 			f.ItemType = is.Type
+		}
+		if f.Type == "object" || (f.Type == "array" && f.ItemType != "string") {
+			sch, err := l.jsonSchema(fs.raw)
+			if err != nil {
+				return nil, fmt.Errorf("attribute %s schema: %w", name, err)
+			}
+			f.Schema = sch
 		}
 		b.Fields = append(b.Fields, f)
 	}

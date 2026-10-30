@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -304,6 +305,10 @@ func TestOperationAnnotations(t *testing.T) {
 		want := map[string]string{AnnOperationID: op.ID, AnnMethod: op.Method, AnnPath: op.Path}
 		if c.Hidden {
 			want[AnnWebhook] = "true"
+		}
+		if op.Body != nil && len(op.Body.RequiredByCategory) > 0 {
+			enc, _ := json.Marshal(op.Body.RequiredByCategory)
+			want[AnnRequiredByCategory] = string(enc)
 		}
 		if !reflect.DeepEqual(c.Annotations, want) {
 			t.Errorf("%s: annotations = %v, want %v", op.ID, c.Annotations, want)
