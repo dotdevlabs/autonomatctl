@@ -83,7 +83,7 @@ var newOps = []struct {
 	{"archiveRefinement", "refinements delete", "DELETE", "/refinements/{id}", "", nil, nil, []string{"a1"}},
 	{"listSchedules", "schedules list", "GET", "/schedules", "", nil, nil, nil},
 	{"getSchedule", "schedules get", "GET", "/schedules/{id}", "", nil, nil, []string{"a1"}},
-	{"updateSchedule", "schedules update", "PATCH", "/schedules/{id}", "schedules", nil, []string{"enabled", "at", "timezone", "description", "steps"}, []string{"a1"}},
+	{"updateSchedule", "schedules update", "PATCH", "/schedules/{id}", "schedules", nil, []string{"enabled", "max_concurrent_runs", "at", "timezone", "description", "steps"}, []string{"a1"}},
 	{"listSignals", "signals list", "GET", "/signals", "", nil, nil, nil},
 	{"createSignal", "signals create", "POST", "/signals", "signals", []string{"kind"}, []string{"kind", "body", "received_on", "product_id", "signal_source_id", "fields"}, nil},
 	{"getSignal", "signals get", "GET", "/signals/{id}", "", nil, nil, []string{"a1"}},
@@ -137,7 +137,7 @@ func TestNewContractOperations(t *testing.T) {
 
 			// required flags are enforced
 			for _, r := range tc.required {
-				if _, _, err := run(t, sp, srv.URL, args...); err == nil || !strings.Contains(err.Error(), "--"+r) {
+				if _, _, err := run(t, sp, srv.URL, args...); err == nil || !strings.Contains(err.Error(), `"`+r+`"`) {
 					t.Errorf("missing --%s not reported: %v", r, err)
 				}
 			}

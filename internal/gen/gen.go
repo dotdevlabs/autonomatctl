@@ -22,17 +22,13 @@ import (
 	"github.com/dotdevlabs/autonomatctl/internal/spec"
 )
 
-// Annotation keys set on every generated leaf command; the ai command and the
-// conformance tests read them back.
+// Annotation keys set on every generated leaf command; ctlkit's ai reference
+// prints them and the conformance tests read them back.
 const (
-	AnnOperationID = "operationId"
+	AnnOperationID = "operation_id"
 	AnnMethod      = "method"
 	AnnPath        = "path"
 	AnnWebhook     = "webhook"
-
-	// Flag annotations read by the ai command.
-	FlagRequired = "autonomatctl.required"
-	FlagEnum     = "autonomatctl.enum"
 )
 
 // reservedFlags are the global flags and the CLI-only flags; a contract field
@@ -228,10 +224,9 @@ func addFlag(fs *pflag.FlagSet, in input, desc string) {
 	u := usage(desc, in)
 	defer func() {
 		if in.required {
-			_ = fs.SetAnnotation(in.name, FlagRequired, []string{"true"})
-		}
-		if len(in.enum) > 0 {
-			_ = fs.SetAnnotation(in.name, FlagEnum, in.enum)
+			// What cobra's MarkFlagRequired sets: cobra enforces it and ctlkit's
+			// ai reference reports required: true.
+			_ = fs.SetAnnotation(in.name, cobra.BashCompOneRequiredFlag, []string{"true"})
 		}
 	}()
 	switch in.kind {
@@ -396,14 +391,10 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, a
 		req.Path = strings.Replace(req.Path, "{"+p+"}", pathEscape(args[i]), 1)
 	}
 
-	var missing []string
 	attrs := map[string]any{}
 	var id *string
 	set := func(in input) (bool, any, error) {
 		if !c.Flags().Changed(in.name) {
-			if in.required {
-				missing = append(missing, "--"+in.name)
-			}
 			return false, nil, nil
 		}
 		v, err := value(c.Flags(), in)
@@ -434,9 +425,6 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, a
 			s := v.(string)
 			id = &s
 		}
-	}
-	if len(missing) > 0 {
-		return req, clierror.New(clierror.CodeUsage, "missing required flag(s): "+strings.Join(missing, ", "), "")
 	}
 	if len(query) > 0 {
 		req.Query = query

@@ -16,7 +16,7 @@ autonomatctl auth login --name prod --url https://autonomat.example --token <tok
 autonomatctl work-items list --q 'status:open'
 autonomatctl work-items create --item_type report --title "Review" --source_kind human --status open
 autonomatctl work-items executions create 42 --state pending --json
-autonomatctl ai            # command reference for agents (markdown); `ai --json` for structured
+autonomatctl ai            # ctlkit command reference for agents (markdown); `ai --json` for the structured reference
 autonomatctl schema        # pinned contract version and source commit SHA
 ```
 
@@ -25,7 +25,9 @@ an action named after the path (`products sunset <id>`). Path parameters are pos
 the contract's exact field names (`--item_type`, not `--item-type`) and query parameter names. Only documented
 fields can be sent: there is no free-form body. Required attributes are enforced before any request.
 Destructive operations (`delete`, `products sunset`) need `--yes`. Operations that authenticate with the
-webhook token are hidden from `--help` but listed by `ai`.
+webhook token are hidden from `--help` and omitted from the `ai` reference, but remain callable.
+Every generated command carries `operation_id`, `method` and `path` cobra annotations, which `ai --json` exposes
+under each command's `annotations`; required request fields are required flags (`required: true` in the reference).
 
 ### Output and exit codes
 

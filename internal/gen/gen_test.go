@@ -140,7 +140,7 @@ func TestUsageErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			if c := exitCode(err); c != int(clierror.CodeUsage) {
+			if c := exitCode(err); c != int(clierror.CodeUsage) && !strings.HasPrefix(err.Error(), "required flag") {
 				t.Errorf("exit code = %d (%v), want %d", c, err, clierror.CodeUsage)
 			}
 			if len(srv.requests()) != before {

@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "1.7.0"
+  version: "1.11.0"
 components:
   securitySchemes:
     apiToken:
@@ -42,6 +42,8 @@ components:
       additionalProperties: false
       properties:
         title:
+          type: string
+        detail:
           type: string
         source:
           type: object
@@ -618,6 +620,14 @@ components:
         tool_id:
           type: string
           nullable: true
+        summary:
+          type: string
+          nullable: true
+          description: Tool, subcommand and arguments of the call. Stored as plain text, truncated to 2000 characters.
+        failure_reason:
+          type: string
+          nullable: true
+          description: Error text, exit code with stderr, or refused subcommand. Stored as plain text, truncated to 2000 characters; a refusal decided by Autonomat takes precedence.
         cost_unit:
           type: string
           nullable: true
@@ -1262,7 +1272,33 @@ components:
                       type: string
                   max_body_bytes:
                     type: integer
+                  env:
+                    type: object
+                    description: "cli credential mapping: environment variable name to the connection field (`credential` or `secret`) whose value is in `credentials.env`. Names only, never values."
+                    additionalProperties:
+                      type: string
+                  auth:
+                    type: string
+                    description: "http credential mapping: `none`, `bearer`, `basic` or `header:<Name>`. The resolved headers are in `credentials.headers`."
+                  send_request_headers:
+                    type: boolean
+                    description: "http credential mapping: whether the connection's request headers are part of `credentials.headers`."
                 description: Always carries `kind` (equal to `interface`). For http, includes optional `allowed_hosts` and `max_body_bytes` (response body cap).
+              credentials:
+                type: object
+                additionalProperties: false
+                description: "Write-only run payload data: the capability's connection credentials resolved through its `invocation` mapping (`env` for cli, `headers` for http). Present only for a granted capability with a mapping and an active connection holding the mapped values; a capability that cannot be resolved is left out with a run warning. Carried by this document only, never returned by any other endpoint, log, event or stored snapshot."
+                properties:
+                  env:
+                    type: object
+                    description: Environment variable name to value (cli).
+                    additionalProperties:
+                      type: string
+                  headers:
+                    type: object
+                    description: HTTP header name to value (http).
+                    additionalProperties:
+                      type: string
               input_schema:
                 type: object
                 additionalProperties: false
@@ -2032,7 +2068,7 @@ components:
     ScheduleAttributes:
       type: object
       additionalProperties: false
-      required: [key, at, timezone, kind, enabled, description, steps, next_run_at, archived_at, created_at, updated_at]
+      required: [key, at, timezone, kind, enabled, max_concurrent_runs, description, steps, next_run_at, archived_at, created_at, updated_at]
       properties:
         key:
           type: string
@@ -2047,6 +2083,9 @@ components:
         enabled:
           type: boolean
           description: False while the schedule is paused.
+        max_concurrent_runs:
+          type: integer
+          description: How many executions of a schedule step are handed to the agent at once (default 2, the agent worker's capacity); the next waiting execution is dispatched as each one finishes.
         description:
           type: string
           nullable: true
@@ -2107,6 +2146,9 @@ components:
       properties:
         enabled:
           type: boolean
+        max_concurrent_runs:
+          type: integer
+          minimum: 1
         at:
           type: string
         timezone:
@@ -2345,24 +2387,39 @@ components:
           additionalProperties:
             $ref: "#/components/schemas/JsonValue"
           properties:
-          command:
-            type: string
-          reference:
-            type: string
-          method:
-            type: string
-          url:
-            type: string
-          allowed:
-            type: array
-            items:
+            command:
               type: string
-          allowed_hosts:
-            type: array
-            items:
+            reference:
               type: string
-          max_body_bytes:
-            type: integer
+            method:
+              type: string
+            url:
+              type: string
+            allowed:
+              type: array
+              items:
+                type: string
+            allowed_hosts:
+              type: array
+              items:
+                type: string
+            max_body_bytes:
+              type: integer
+            env:
+              type: object
+              description: "cli credential mapping: environment variable name to `credential` or `secret` (a field of the capability's connection). Names only; a mapping requires `connection_id`."
+              additionalProperties:
+                type: string
+            auth:
+              type: string
+              description: "http credential mapping: `none`, `bearer` (credential), `basic` (credential as user:password) or `header:<Name>`."
+            send_request_headers:
+              type: boolean
+              description: "http credential mapping: also send the connection's request headers."
+        connection_id:
+          type: integer
+          nullable: true
+          description: The connection (of the same account) whose credentials the invocation mapping applies. The credential values are never returned.
         inputs:
           type: array
           items:
@@ -3903,6 +3960,8 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `status:open product:myproduct since:2026-10-01 sort:updated-desc`
             Unknown qualifiers return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
       x-scenarios:
@@ -4309,6 +4368,8 @@ paths:
           description: |
             Filter query supporting typed qualifiers. Example: `status:active product:node-product-alpha since:2026-10-01`.
             An unknown qualifier or invalid value returns 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: page[number]
@@ -4786,6 +4847,8 @@ paths:
           description: |
             Filter query supporting typed qualifiers. Example: `product:node-product-alpha status:active since:2026-10-01`.
             An unknown qualifier or invalid value returns 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: page[number]
@@ -5430,6 +5493,8 @@ paths:
           description: |
             Filter query supporting typed qualifiers and free text. Example: `status:pending category:approval owner:approval product:my-product initiative:my-initiative since:2026-10-01 sort:updated-desc`.
             Unknown qualifiers and invalid values return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: "page[number]"
@@ -5506,6 +5571,8 @@ paths:
           description: |
             Filter query supporting typed qualifiers and free text. Example: `kind:usage product:my-product source:Sentry since:2026-10-01 sort:received-desc`.
             Unknown qualifiers and invalid values return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: "page[number]"
@@ -5746,6 +5813,8 @@ paths:
           description: |
             Filter query supporting typed qualifiers and free text. Example: `subject:InboxItem kind:inbox_resolution product:my-product initiative:my-initiative since:2026-10-01 sort:occurred-asc`.
             Unknown qualifiers and invalid values return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: "page[number]"
@@ -8987,7 +9056,7 @@ paths:
           auth: apiToken
           params:
             id: "~fixture:schedules:acme_schedule"
-          body: {"data": {"type": "schedules", "attributes": {"enabled": false, "at": "30 8 * * 1-5", "timezone": "UTC", "steps": [{"procedure": "morning-review", "nodes": "root"}]}}}
+          body: {"data": {"type": "schedules", "attributes": {"enabled": false, "max_concurrent_runs": 3, "at": "30 8 * * 1-5", "timezone": "UTC", "steps": [{"procedure": "morning-review", "nodes": "root"}]}}}
         - id: run_token
           status: 200
           auth: runToken
@@ -9036,6 +9105,18 @@ paths:
           params:
             id: "~fixture:schedules:acme_schedule"
           body: {"data": {"attributes": {"steps": "x"}}}
+        - id: invalid_limit
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:schedules:acme_schedule"
+          body: {"data": {"attributes": {"max_concurrent_runs": 0}}}
+        - id: wrong_limit_type
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:schedules:acme_schedule"
+          body: {"data": {"attributes": {"max_concurrent_runs": "many"}}}
       responses:
         "200":
           description: Schedule updated
@@ -10141,6 +10222,8 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `interface:cli since:2026-10-01 sort:key-asc`
             Unknown qualifiers return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
       x-scenarios:
@@ -10213,6 +10296,16 @@ paths:
           body:
             data:
               attributes: {}
+        - id: validation_error_unknown_connection
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                key: bad-connection-tool
+                connection_id: 0
+                invocation:
+                  method: http
         - id: validation_error_malformed_inputs
           status: 422
           auth: apiToken
@@ -10345,6 +10438,34 @@ paths:
                 key: updated-tool
                 invocation:
                   method: http
+        - id: updated_with_connection_and_mapping
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              type: capabilities
+              attributes:
+                connection_id: "~fixture:connections:github_connection"
+                invocation:
+                  method: http
+                  url: https://example.com
+                  auth: bearer
+                  send_request_headers: false
+        - id: invalid_credential_mapping
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:capabilities:tool_one"
+          body:
+            data:
+              type: capabilities
+              attributes:
+                invocation:
+                  url: https://example.com
+                  auth: bearer
+                  env: {}
         - id: invalid_update
           status: 422
           auth: apiToken
@@ -10531,6 +10652,8 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `sort:title-asc since:2026-10-01`
             Unknown qualifiers return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
       x-scenarios:
@@ -11449,6 +11572,8 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `context_type:Product since:2026-10-01 sort:updated-desc`
             Unknown qualifiers return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: page[number]
@@ -11702,6 +11827,8 @@ paths:
             Filter query supporting typed qualifiers.
             Example: `role:assistant since:2026-10-01`
             Unknown qualifiers return 422.
+            A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
+            An unknown value returns 422 with `source.parameter` `q` and a `detail` naming the filter, the value and that an id or key is expected.
           schema:
             type: string
         - name: page[number]
