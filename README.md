@@ -73,6 +73,10 @@ The token (or a logged-in `gh`) needs read access to `dotdevlabs/autonomat`. Wit
 appears as a command with no hand-written code. Generation fails loudly if two operations map to the same
 command, a field collides with a CLI flag, or a name collides with a built-in command.
 
+Relationship operations whose body is a list of resource identifiers take a repeatable `--ids` flag; the
+command sends each id as `{type, id}` in `data`. The loader tolerates duplicate mapping keys in the contract
+(the last definition wins) but rejects them under `paths`.
+
 ## Development
 
 ```sh
