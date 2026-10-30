@@ -123,6 +123,24 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 	if err != nil {
 		return nil, err
 	}
+	if data.Type == "array" && data.Items != nil {
+		// Relationship linkage: data is a list of resource identifiers.
+		item, err := l.resolve(data.Items)
+		if err != nil {
+			return nil, fmt.Errorf("linkage items: %w", err)
+		}
+		b.Linkage = true
+		if t, ok := item.Properties.m["type"]; ok {
+			ts, err := l.resolve(t)
+			if err != nil {
+				return nil, err
+			}
+			if len(ts.Enum) > 0 {
+				b.DataType = ts.Enum[0].Value
+			}
+		}
+		return b, nil
+	}
 	if t, ok := data.Properties.m["type"]; ok {
 		ts, err := l.resolve(t)
 		if err != nil {

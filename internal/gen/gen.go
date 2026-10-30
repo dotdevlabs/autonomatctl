@@ -316,7 +316,14 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 		addFlag(fs, in, q.Description)
 	}
 	var idInput *input
-	if op.Body != nil {
+	if op.Body != nil && op.Body.Linkage {
+		if err := claim(linkageFlag); err != nil {
+			return nil, err
+		}
+		in := input{name: linkageFlag, kind: kStrings, required: true, typ: "array"}
+		inputs = append(inputs, in)
+		addFlag(fs, in, "Ids of the "+op.Body.DataType+" to link (repeatable)")
+	} else if op.Body != nil {
 		if op.Body.HasID {
 			if err := claim("id"); err != nil {
 				return nil, err
@@ -357,6 +364,15 @@ func argNames(ps []string) string {
 		return ""
 	}
 	return "<" + strings.Join(ps, "> <") + ">"
+}
+
+// linkageFlag is the flag carrying the resource identifiers of a relationship
+// request.
+const linkageFlag = "ids"
+
+type linkageIdentifier struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
 type docBody struct {
@@ -425,7 +441,19 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, a
 	if len(query) > 0 {
 		req.Query = query
 	}
-	if op.Body != nil && (op.Body.DataType != "" || id != nil || len(op.Body.Fields) > 0) {
+	if op.Body != nil && op.Body.Linkage {
+		ids, _ := attrs[linkageFlag].([]string)
+		list := make([]linkageIdentifier, 0, len(ids))
+		for _, id := range ids {
+			list = append(list, linkageIdentifier{Type: op.Body.DataType, ID: id})
+		}
+		body, err := json.Marshal(map[string]any{"data": list})
+		if err != nil {
+			return req, err
+		}
+		req.Body = body
+		req.ContentType = op.Body.ContentType
+	} else if op.Body != nil && (op.Body.DataType != "" || id != nil || len(op.Body.Fields) > 0) {
 		d := docData{Type: op.Body.DataType, ID: id}
 		if len(op.Body.Fields) > 0 {
 			d.Attributes = &attrs

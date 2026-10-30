@@ -104,7 +104,9 @@ func TestConformance(t *testing.T) {
 			}
 			wantAttrs := map[string]any{}
 			var wantID string
-			if op.Body != nil {
+			if op.Body != nil && op.Body.Linkage {
+				args = append(args, "--ids", "x1", "--ids", "x2")
+			} else if op.Body != nil {
 				if op.Body.HasID {
 					args = append(args, "--id", "res-1")
 					wantID = "res-1"
@@ -172,6 +174,16 @@ func TestConformance(t *testing.T) {
 			doc := decode(t, got.Body)
 			if len(doc) != 1 {
 				t.Errorf("body members = %v, want only data", doc)
+			}
+			if op.Body.Linkage {
+				want := []any{
+					map[string]any{"type": op.Body.DataType, "id": "x1"},
+					map[string]any{"type": op.Body.DataType, "id": "x2"},
+				}
+				if !reflect.DeepEqual(doc["data"], want) {
+					t.Errorf("linkage data = %v, want %v", doc["data"], want)
+				}
+				return
 			}
 			data, _ := doc["data"].(map[string]any)
 			if op.Body.DataType != "" && data["type"] != op.Body.DataType {
