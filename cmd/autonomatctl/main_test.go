@@ -254,12 +254,12 @@ func TestWriteSendsOnlyDocumentedFields(t *testing.T) {
 	sandbox(t)
 	srv := newServer(t)
 	login(t, "x", srv.URL, "t", true)
-	_, errOut, code := cli(t, "work-items", "create", "--item_type", "report", "--title", "T", "--source_kind", "human", "--status", "open", "--tags", "a")
+	_, errOut, code := cli(t, "work-items", "create", "--item_type", "report", "--title", "T", "--source_kind", "human", "--status", "open", "--tags", "a", "--product_id", "1", "--workable_type", "Initiative", "--workable_id", "1")
 	if code != 0 {
 		t.Fatalf("%d %s", code, errOut)
 	}
 	if r := srv.last(t); r.Method != "POST" || r.URI != "/work_items" ||
-		r.Body != `{"data":{"type":"work-items","attributes":{"item_type":"report","source_kind":"human","status":"open","tags":["a"],"title":"T"}}}` {
+		r.Body != `{"data":{"type":"work-items","attributes":{"item_type":"report","product_id":1,"source_kind":"human","status":"open","tags":["a"],"title":"T","workable_id":1,"workable_type":"Initiative"}}}` {
 		t.Errorf("request = %+v", r)
 	}
 	n := srv.count()

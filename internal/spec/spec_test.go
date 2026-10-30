@@ -35,7 +35,7 @@ func TestLoadPinned(t *testing.T) {
 	if s.Title != "Autonomat API" || s.Version == "" || s.OpenAPI == "" {
 		t.Fatalf("bad header: %+v", s)
 	}
-	if len(s.Operations) != 100 {
+	if len(s.Operations) != 103 {
 		t.Fatalf("operations = %d", len(s.Operations))
 	}
 	ids := map[string]bool{}
