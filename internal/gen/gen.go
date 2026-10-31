@@ -362,6 +362,15 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 					return nil, err
 				}
 				quals = append(quals, qi)
+				if nqi, nin, ok := qi.negation(); ok {
+					if err := claimFlag(nqi.flag); err != nil {
+						return nil, err
+					}
+					if err := addFlag(cmd, nin, ql.Description); err != nil {
+						return nil, err
+					}
+					quals = append(quals, nqi)
+				}
 			}
 		}
 	}

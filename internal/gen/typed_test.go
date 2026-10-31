@@ -170,6 +170,34 @@ func qOf(t *testing.T, args ...string) (string, bool, error) {
 	return vals[0], true, nil
 }
 
+// TestNegationFlagsMatchContract pins the --q-not-<key> flags to the
+// contract: one exists exactly for the qualifiers whose description documents
+// "-<key>:" (never for sort or the boolean flag filter).
+func TestNegationFlagsMatchContract(t *testing.T) {
+	sp := pinnedSpec(t)
+	byOp := commandsByOperation(testRoot(t, sp, "http://unused.invalid", fastCfg()))
+	n := 0
+	for _, op := range sp.Operations {
+		c := byOp[op.ID]
+		for _, q := range op.Query {
+			for _, ql := range q.Qualifiers {
+				want := ql.Type != spec.QualSort && ql.Type != spec.QualBoolean &&
+					strings.Contains(ql.Description, "`-"+ql.Key+":`")
+				got := c.Flags().Lookup("q-not-"+ql.Key) != nil
+				if got != want {
+					t.Errorf("%s --q-not-%s: exists = %v, want %v", op.ID, ql.Key, got, want)
+				}
+				if want {
+					n++
+				}
+			}
+		}
+	}
+	if n == 0 {
+		t.Error("the pinned contract documents no negatable qualifier")
+	}
+}
+
 func TestQualifierJoin(t *testing.T) {
 	cases := []struct {
 		name string
@@ -183,7 +211,12 @@ func TestQualifierJoin(t *testing.T) {
 		{"free only unchanged", []string{"--q", "status:open foo"}, "status:open foo", true},
 		{"nothing", nil, "", false},
 		{"comma list", []string{"--q-status", "open,failed"}, "status:open,failed", true},
-		{"reference list and key", []string{"--q-product", "my-product,12"}, "product:my-product,12", true},
+		{"reference key", []string{"--q-product", "my-product"}, "product:my-product", true},
+		{"negated enum", []string{"--q-not-status", "failed"}, "-status:failed", true},
+		{"negated enum list", []string{"--q-not-status", "open,failed"}, "-status:open,failed", true},
+		{"negated reference", []string{"--q-not-product", "12"}, "-product:12", true},
+		{"positive then negated", []string{"--q-not-status", "failed", "--q-status", "open"}, "status:open -status:failed", true},
+		{"negated in contract order", []string{"--q-not-product", "12", "--q-product", "7", "--q-status", "open"}, "status:open product:7 -product:12", true},
 		{"boolean on", []string{"--q-is"}, "is:blocked", true},
 		{"boolean off", []string{"--q-is=false"}, "-is:blocked", true},
 		{"date", []string{"--q-since", "2026-10-01"}, "since:2026-10-01", true},
@@ -203,15 +236,24 @@ func TestQualifierJoin(t *testing.T) {
 
 func TestQualifierRejectsBadValues(t *testing.T) {
 	cases := map[string][]string{
-		"enum":            {"--q-status", "blocked"},
-		"enum in list":    {"--q-status", "open,blocked"},
-		"empty":           {"--q-status", " "},
-		"sort":            {"--q-sort", "nope"},
-		"date":            {"--q-since", "yesterday"},
-		"date impossible": {"--q-since", "2026-13-40"},
-		"date range":      {"--q-since", "2026-10-01..2026-99-01"},
-		"reference":       {"--q-product", "a b"},
-		"reference list":  {"--q-product", "12,,"},
+		"enum":                         {"--q-status", "blocked"},
+		"enum in list":                 {"--q-status", "open,blocked"},
+		"empty":                        {"--q-status", " "},
+		"sort":                         {"--q-sort", "nope"},
+		"date":                         {"--q-since", "yesterday"},
+		"date impossible":              {"--q-since", "2026-13-40"},
+		"date range":                   {"--q-since", "2026-10-01..2026-99-01"},
+		"reference":                    {"--q-product", "a b"},
+		"reference list":               {"--q-product", "12,,"},
+		"reference comma list":         {"--q-product", "my-product,12"},
+		"sort comma list":              {"--q-sort", "updated-desc,created-asc"},
+		"negated enum":                 {"--q-not-status", "blocked"},
+		"negated enum in list":         {"--q-not-status", "open,blocked"},
+		"negated empty":                {"--q-not-status", " "},
+		"negated reference":            {"--q-not-product", "a b"},
+		"negated reference comma list": {"--q-not-product", "my-product,12"},
+		"no negated sort":              {"--q-not-sort", "updated-desc"},
+		"no negated boolean":           {"--q-not-is"},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -235,6 +277,12 @@ func qualCmd(t *testing.T, quals ...spec.Qualifier) (*cobra.Command, []qualInput
 			t.Fatal(err)
 		}
 		out = append(out, qi)
+		if nqi, nin, ok := qi.negation(); ok {
+			if err := addFlag(cmd, nin, q.Description); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, nqi)
+		}
 	}
 	return cmd, out
 }
@@ -281,6 +329,47 @@ func TestQualifierTypes(t *testing.T) {
 	}
 }
 
+func TestQualifierNegationTypes(t *testing.T) {
+	neg := func(key string) string { return "`-" + key + ":` negates." }
+	quals := []spec.Qualifier{
+		{Key: "d", Type: spec.QualDate, Description: neg("d")},
+		{Key: "n", Type: spec.QualNumber, Description: neg("n")},
+		{Key: "t", Type: spec.QualText, Description: neg("t")},
+		{Key: "b", Type: spec.QualBoolean, Description: neg("b")},
+		{Key: "s", Type: spec.QualSort, Values: []string{"a", "b"}, Description: neg("s")},
+		{Key: "plain", Type: spec.QualText, Description: "no negation documented"},
+	}
+	cases := []struct {
+		args []string
+		want string
+		err  bool
+	}{
+		{[]string{"--q-not-d", ">=2026-10-01"}, "-d:>=2026-10-01", false},
+		{[]string{"--q-not-d", "yesterday"}, "", true},
+		{[]string{"--q-not-n", "5"}, "-n:5", false},
+		{[]string{"--q-not-n", "x"}, "", true},
+		{[]string{"--q-not-t", "two words"}, `-t:"two words"`, false},
+		{[]string{"--q-t", "a", "--q-not-t", "b"}, "t:a -t:b", false},
+		{[]string{"--q-b=false"}, "b:false", false},
+	}
+	for _, tc := range cases {
+		cmd, qs := qualCmd(t, quals...)
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		got, _, err := joinQuery(cmd.Flags(), qs, "")
+		if tc.err != (err != nil) || got != tc.want {
+			t.Errorf("%v: q = %q err=%v; want %q err=%v", tc.args, got, err, tc.want, tc.err)
+		}
+	}
+	cmd, _ := qualCmd(t, quals...)
+	for _, k := range []string{"b", "s", "plain"} {
+		if cmd.Flags().Lookup("q-not-"+k) != nil {
+			t.Errorf("--q-not-%s must not exist", k)
+		}
+	}
+}
+
 func TestQualifierGenerationErrors(t *testing.T) {
 	doc := func(extra string) string {
 		return `
@@ -294,16 +383,17 @@ paths:
           in: query
           schema: {type: string}
           x-qualifiers:
-            - {key: status, type: text}
+            - {key: status, type: text, description: "\x60-status:\x60 negates"}
 ` + extra + `
       responses:
         "200": {content: {application/vnd.api+json: {schema: {properties: {data: {type: array}}}}}}
 `
 	}
 	for name, extra := range map[string]string{
-		"flag collision":    "        - {name: q-status, in: query, schema: {type: string}}",
-		"duplicate enum":    "        - {name: kind, in: query, schema: {type: string, enum: [a, a]}}",
-		"empty enum member": "        - {name: kind, in: query, schema: {type: string, enum: [\"\"]}}",
+		"flag collision":     "        - {name: q-status, in: query, schema: {type: string}}",
+		"negation collision": "        - {name: q-not-status, in: query, schema: {type: string}}",
+		"duplicate enum":     "        - {name: kind, in: query, schema: {type: string, enum: [a, a]}}",
+		"empty enum member":  "        - {name: kind, in: query, schema: {type: string, enum: [\"\"]}}",
 	} {
 		t.Run(name, func(t *testing.T) {
 			sp, err := spec.Load([]byte(doc(extra)))
