@@ -20,10 +20,16 @@ const queryParam = "q"
 // qualFlagPrefix prefixes every qualifier flag.
 const qualFlagPrefix = "q-"
 
-// qualInput is one --q-<key> flag.
+// qualNotPrefix follows qualFlagPrefix on the flags that negate a qualifier
+// (--q-not-<key> renders -key:value).
+const qualNotPrefix = "not-"
+
+// qualInput is one --q-<key> or --q-not-<key> flag.
 type qualInput struct {
 	spec.Qualifier
 	flag string
+	// negate renders the term as -key:value.
+	negate bool
 	// boolean qualifiers: the value emitted for true (and, negated, for false);
 	// empty for the true/false grammar.
 	boolValue string
@@ -60,14 +66,32 @@ func newQualInput(q spec.Qualifier) (qualInput, input) {
 	return qi, in
 }
 
-// term renders the flag's value as a q-grammar term; ok is false when the flag
-// was not given.
+// negation returns the --q-not-<key> flag of a qualifier whose contract
+// documents "-<key>:"; ok is false for the rest. Sort has no negation and a
+// boolean qualifier already negates through --q-<key>=false.
+func (qi qualInput) negation() (qualInput, input, bool) {
+	if qi.Type == spec.QualSort || qi.Type == spec.QualBoolean ||
+		!strings.Contains(qi.Description, "`-"+qi.Key+":`") {
+		return qualInput{}, input{}, false
+	}
+	n, in := newQualInput(qi.Qualifier)
+	n.flag, n.negate = qualFlagPrefix+qualNotPrefix+qi.Key, true
+	in.name = n.flag
+	return n, in, true
+}
+
+// term renders the flag's value as a q-grammar term (prefixed "-" when
+// negated); ok is false when the flag was not given.
 func (qi qualInput) term(fs *pflag.FlagSet) (string, bool, error) {
 	if !fs.Changed(qi.flag) {
 		return "", false, nil
 	}
 	bad := func(msg string) error {
 		return clierror.New(clierror.CodeUsage, fmt.Sprintf("--%s: %s", qi.flag, msg), "")
+	}
+	sign := ""
+	if qi.negate {
+		sign = "-"
 	}
 	if qi.isBoolFlag() {
 		on, _ := fs.GetBool(qi.flag)
@@ -85,6 +109,9 @@ func (qi qualInput) term(fs *pflag.FlagSet) (string, bool, error) {
 	}
 	switch qi.Type {
 	case spec.QualEnum, spec.QualSort, spec.QualBoolean:
+		if qi.Type == spec.QualSort && strings.Contains(v, ",") {
+			return "", false, bad("a single sort order; the server uses only the first of a comma list")
+		}
 		if len(qi.Values) > 0 {
 			for _, e := range strings.Split(v, ",") {
 				if !contains(qi.Values, e) {
@@ -101,17 +128,18 @@ func (qi qualInput) term(fs *pflag.FlagSet) (string, bool, error) {
 			return "", false, bad(fmt.Sprintf("%q is not an integer (optionally with >=, >, <=, < or a from..to range)", v))
 		}
 	case spec.QualReference:
-		for _, r := range strings.Split(v, ",") {
-			if !refRE.MatchString(r) {
-				return "", false, bad(fmt.Sprintf("%q is not a record id or key", r))
-			}
+		if strings.Contains(v, ",") {
+			return "", false, bad("a single record id or key; comma lists are not supported")
+		}
+		if !refRE.MatchString(v) {
+			return "", false, bad(fmt.Sprintf("%q is not a record id or key", v))
 		}
 	case spec.QualText:
 		if strings.ContainsAny(v, " \t\"") {
 			v = `"` + strings.ReplaceAll(v, `"`, `\"`) + `"`
 		}
 	}
-	return qi.Key + ":" + v, true, nil
+	return sign + qi.Key + ":" + v, true, nil
 }
 
 // isBoolFlag reports whether the flag is a bool flag.

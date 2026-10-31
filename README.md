@@ -39,11 +39,13 @@ under each command's `annotations`; required request fields are required flags (
 - Commands whose request documents `x-required-by-category` (inbox items) carry a `required_by_category`
   annotation: compact JSON mapping each category to the parts it requires.
 
-List commands get one typed flag per documented `x-qualifiers` entry, named `--q-<key>`: `enum` and `sort` take the
-listed values (comma-separated for several), `date` takes `YYYY-MM-DD` with an optional `>=`, `>`, `<=`, `<` or a
-`from..to` range, `reference` takes a record id or key, `number` an integer, `text` free text, and `boolean` is a bool
-flag (`--q-is` sends `is:<value>`, `--q-is=false` sends `-is:<value>`). The command joins them, in contract order,
-and then any free `--q` text into the single `q` parameter:
+List commands get one typed flag per documented `x-qualifiers` entry, named `--q-<key>`: `enum` takes the listed values
+(comma-separated for several, matching any), `sort` takes one listed value, `date` takes `YYYY-MM-DD` with an optional `>=`, `>`, `<=`, `<` or a
+`from..to` range, `reference` takes a single record id or key, `number` an integer, `text` free text, and `boolean` is a bool
+flag (`--q-is` sends `is:<value>`, `--q-is=false` sends `-is:<value>`). Comma lists for `reference` and `sort` are refused before the call, because the
+server cannot use them. Where the contract documents `-<key>:`, a `--q-not-<key>` flag negates the qualifier
+(`--q-not-status failed` sends `-status:failed`); it takes the same values as `--q-<key>`. The command joins them, in
+contract order (positive, then negated), and then any free `--q` text into the single `q` parameter:
 
 ```
 autonomatctl work-items list --q-status open --q-product 12 --q 'free text'   # q=status:open product:12 free text

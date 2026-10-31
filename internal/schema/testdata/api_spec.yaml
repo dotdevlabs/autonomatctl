@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "1.19.0"
+  version: "3.0.0"
 components:
   securitySchemes:
     apiToken:
@@ -70,7 +70,7 @@ components:
     AccountAttributes:
       type: object
       additionalProperties: false
-      required: [name, worker_ingest_token_configured]
+      required: [name, worker_ingest_token_configured, work_item_status_map, conversation_answer_settings, work_item_procedure_key, external_ref_display_rules]
       properties:
         name:
           type: string
@@ -82,6 +82,85 @@ components:
         default_connection_id:
           type: string
           nullable: true
+        work_sync_interval_minutes:
+          type: integer
+          minimum: 1
+          description: Minutes between work tracker syncs for this account.
+        work_item_status_map:
+          $ref: "#/components/schemas/WorkItemStatusMap"
+        conversation_answer_settings:
+          $ref: "#/components/schemas/ConversationAnswerSettings"
+        work_item_procedure_key:
+          type: string
+          description: Key of the Standard (kind procedure) whose accepted body starts every work item run's goal. Default `work-item-dispatch`.
+        external_ref_display_rules:
+          $ref: "#/components/schemas/ExternalRefDisplayRules"
+    ExternalRefDisplayRules:
+      type: object
+      additionalProperties: false
+      required: [rules, fallback]
+      description: >-
+        Account data stating how a product's external references are written in agent context. The first
+        rule whose `tool` (when given) equals the reference's tool and whose `kinds` (when given) include
+        its kind supplies the `template`; otherwise `fallback`. Templates must contain `{ref}` and may
+        use `{tool}`, `{kind}` and `{ref}`. The url and label are always appended.
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExternalRefDisplayRule"
+        fallback:
+          type: string
+    ExternalRefDisplayRule:
+      type: object
+      additionalProperties: false
+      required: [template]
+      properties:
+        tool:
+          type: string
+        kinds:
+          type: array
+          items:
+            type: string
+        template:
+          type: string
+    ConversationAnswerSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        procedure_key:
+          type: string
+          description: Key of the accepted `procedure` Standard whose body instructs answer runs. A missing or blank procedure fails the run and posts the reason to the conversation.
+        history_limit:
+          type: integer
+          minimum: 1
+          description: Number of latest conversation messages given to an answer run; older messages are folded into the rolling conversation summary.
+        message_limit:
+          type: integer
+          minimum: 1
+          description: Characters kept of each history message.
+        summary_line_limit:
+          type: integer
+          minimum: 1
+          description: Characters kept of each message in the rolling summary.
+        summary_limit:
+          type: integer
+          minimum: 1
+          description: Characters kept of the rolling summary (oldest lines dropped first; earlier summary records are kept).
+      description: >-
+        Account data for conversation answer runs. All keys are present on read; on update a partial object
+        changes only the given keys.
+    WorkItemStatusMap:
+      type: object
+      additionalProperties:
+        type: string
+      description: >-
+        Account data mapping a run's `item_outcome.state` to a work item status. Exactly the keys
+        `completed` (completed with no open external work, default `done`), `completed_open_external_work`
+        (completed while the item has external refs, default `in_progress`), `interrupted` (default `ready`),
+        `stopped` (default `ready`) and `failed` (default `ready`); each value is one of the work item statuses. An `item_outcome.state`
+        with no key here is not applied: the delivery is accepted, the status stays and the reason is
+        recorded as the run's `failure_reason`.
     AccountResource:
       type: object
       additionalProperties: false
@@ -219,6 +298,56 @@ components:
         db_version:
           type: string
           nullable: true
+    RunDependency:
+      type: object
+      additionalProperties: false
+      required: [id, title, status, outcome, outputs]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+        outcome:
+          type: string
+          nullable: true
+        outputs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, kind, reference, result]
+            properties:
+              id:
+                type: string
+              kind:
+                type: string
+              reference:
+                type: string
+                nullable: true
+              result:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
+    WorkItemOutput:
+      type: object
+      additionalProperties: false
+      required: [id, execution_id, kind, reference, result]
+      properties:
+        id:
+          type: string
+        execution_id:
+          type: string
+        kind:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        result:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
     WorkItemAttributes:
       type: object
       additionalProperties: false
@@ -258,6 +387,26 @@ components:
           type: string
           nullable: true
           description: What should happen next with this work item (free text, at most 2000 characters).
+        external_refs:
+          type: array
+          description: >-
+            Work created in connected tools. tracked is true when an account work tracker matches tool and
+            kind (state and terminal then follow the external work); an untracked ref is shown as not tracked.
+          items:
+            $ref: "#/components/schemas/WorkItemExternalRef"
+        outcome:
+          type: string
+          nullable: true
+          description: >-
+            Latest outcome: the answer of the item's newest finished or completed run (approved-call runs
+            excluded), null when no run has reported one. Read-only.
+        outputs:
+          type: array
+          description: >-
+            Outputs (kind, reference, result) reported by the actions of every run of the item, oldest
+            first. Read-only.
+          items:
+            $ref: "#/components/schemas/WorkItemOutput"
         ref:
           type: string
           nullable: true
@@ -276,6 +425,14 @@ components:
         merged_into_id:
           type: integer
           nullable: true
+        depends_on_ids:
+          type: array
+          description: >
+            Ids of work items of the account this item waits on. An item is dispatched only once every one
+            of them is done, closed or cancelled; it is dispatched automatically when the last one completes.
+            Unknown ids, the item itself and cycles are rejected with 422.
+          items:
+            type: integer
         connection_id:
           type: string
           nullable: true
@@ -346,7 +503,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [open, closed, cancelled, queued, sent, running, finished, failed]
+          enum: [open, closed, cancelled, queued, sent, running, finished, failed, done, in_progress, ready]
           default: open
           description: Defaults to `open`. Ignored for a run token (always `open`).
         dispatch_reason:
@@ -358,6 +515,14 @@ components:
         merged_into_id:
           type: integer
           nullable: true
+        depends_on_ids:
+          type: array
+          description: >
+            Ids of work items of the account this item waits on. An item is dispatched only once every one
+            of them is done, closed or cancelled; it is dispatched automatically when the last one completes.
+            Unknown ids, the item itself and cycles are rejected with 422.
+          items:
+            type: integer
         connection_id:
           type: string
           nullable: true
@@ -679,6 +844,13 @@ components:
       type: object
       additionalProperties: false
       properties:
+        usage_notional:
+          allOf:
+            - $ref: "#/components/schemas/MoneyInput"
+          description: >-
+            Subscription usage valued at API prices. It is stored as `usage_notional`, never as cost, and
+            is not counted in any spend. When the run's connection is a subscription credential, a
+            `cost_actual` sent for the action is stored as `usage_notional` instead.
         id:
           type: string
         kind:
@@ -722,17 +894,75 @@ components:
         cost_pending:
           type: boolean
           nullable: true
+        external_ref:
+          $ref: "#/components/schemas/ExternalRefInput"
+          nullable: true
         outputs:
           type: array
           items:
             $ref: "#/components/schemas/OutputInputAttributes"
+    ExternalRefInput:
+      type: object
+      additionalProperties: false
+      required: [tool, kind, ref]
+      description: >-
+        Work the action created in a connected tool. It is stored on the action and merged into the
+        work item's external_refs (existing refs are kept, a ref is never duplicated). When an account
+        work tracker matches tool and kind, the ref is followed until the external work finishes;
+        otherwise it is recorded and shown as not tracked. Non-empty strings for tool, kind and ref are
+        required, otherwise the delivery is a 422 with a pointer to the ref.
+      properties:
+        tool:
+          type: string
+        kind:
+          type: string
+        ref:
+          type: string
+        url:
+          type: string
+          nullable: true
+    WorkItemExternalRef:
+      type: object
+      additionalProperties: false
+      required: [tool, kind, ref, url, tracked, state, terminal]
+      properties:
+        tool:
+          type: string
+        kind:
+          type: string
+        ref:
+          type: string
+        url:
+          type: string
+          nullable: true
+        tracked:
+          type: boolean
+        state:
+          type: string
+          nullable: true
+          description: The external state last read by the work tracker, null until read or when not tracked.
+        terminal:
+          type: boolean
     ActionCostAttributes:
       type: object
       additionalProperties: false
-      required: [cost_actual]
+      description: >-
+        Either a cost_actual, or closed: true with no cost_actual (null or absent) when the external work
+        ended without a cost. A closed result records zero (or keeps an amount already recorded), stores
+        the reason, sets the recorded-at time and clears cost_pending. Without cost_actual and without
+        closed: true the request is a 422.
       properties:
         cost_actual:
-          $ref: "#/components/schemas/MoneyInput"
+          allOf:
+            - $ref: "#/components/schemas/MoneyInput"
+          nullable: true
+        closed:
+          type: boolean
+          description: Marks the work as closed so a missing cost_actual is accepted.
+        reason:
+          type: string
+          nullable: true
+          description: Why the closed work has no cost (only used with closed).
         cost_conversion:
           $ref: "#/components/schemas/CostConversionInput"
           nullable: true
@@ -774,6 +1004,10 @@ components:
       properties:
         state:
           type: string
+          description: >-
+            `completed`, `interrupted`, `stopped` or `failed`. The work item status is set from the account's
+            `work_item_status_map` after the delivery's external refs are recorded; an unmapped value
+            leaves the status unchanged and is recorded as the run's `failure_reason`.
         note:
           type: string
           nullable: true
@@ -788,42 +1022,6 @@ components:
       properties:
         reason:
           type: string
-    RequestedActionInput:
-      type: object
-      additionalProperties: false
-      required: [type]
-      properties:
-        type:
-          type: string
-          enum: [dispatch, steer, update_inbox_item, resolve_inbox_item]
-          description: >-
-            dispatch starts an existing work item and steer saves a steering instruction (answer runs only).
-            update_inbox_item sets the reason and evidence of a pending Inbox item; resolve_inbox_item resolves a
-            pending Inbox item that live evidence shows is already done. The two Inbox actions are available to any
-            run kind whose role is granted the capability of the same name (a capability with interface
-            `requested_action`, listed in the run payload `tool_definitions`).
-        work_item_id:
-          type: string
-          description: "Existing work item of this account. Required for dispatch; for steer give this or initiative_id."
-        initiative_id:
-          type: string
-          description: "Existing initiative of this account (steer only). Give exactly one of work_item_id or initiative_id."
-        instruction:
-          type: string
-          description: "Steering instruction text (steer only, required)."
-        inbox_item_id:
-          type: string
-          description: >-
-            Pending Inbox item of this account that belongs to the run's node: its product, its initiative,
-            or any item for the root (update_inbox_item and resolve_inbox_item, required).
-        reason:
-          type: string
-          description: "Why a person is needed for the item (update_inbox_item, required). Replaces the item's reason."
-        evidence:
-          type: string
-          description: >-
-            Evidence as text with a reference to each source (required). update_inbox_item replaces the item's
-            evidence; resolve_inbox_item records it on the resolution.
     RunDeliveryAttributes:
       type: object
       additionalProperties: false
@@ -868,38 +1066,14 @@ components:
             rather than doing work). Posted as one assistant message in the conversation. Ignored for
             runs on work items. Used only when status is finished or completed; when the run failed
             the failure note below is shown instead. Agent progress is never posted.
-        requested_actions:
-          type: array
-          nullable: true
-          maxItems: 5
-          description: >-
-            Actions a run asks the app to perform; honoured only for an answer or schedule run whose status
-            is finished or completed, ignored otherwise. Text in `answer` never dispatches, steers or
-            links anything. The app performs each action through its existing paths, records it as
-            activity, appends its outcome (done, already running, or blocked with the reason) to the one
-            assistant message, and links each touched work item as a work link card. A dispatch needs the
-            dispatch permission of the operator who asked and passes every dispatch gate; a steer is saved
-            received and becomes applied when a later run's payload is built. An invalid entry (unknown
-            type, unknown or cross-account target, blank instruction) rejects the whole delivery with 422
-            before anything is performed.
-
-            update_inbox_item and resolve_inbox_item (any answer or schedule run) are performed only when the
-            run's role was granted the capability of that name, the Inbox item is pending, and it belongs to
-            the run's node (its product, its initiative, or any item for the root). update_inbox_item sets
-            reason and evidence, keeps the previous values in the item's revision history and records an
-            activity event; resolve_inbox_item resolves through the existing Inbox resolution, recording the
-            evidence and the run, with an activity event. Nothing is deleted. Requested actions never fail the
-            result: an invalid entry of these types, and any entry of a schedule run, is skipped and reported as
-            JSON:API errors in `requested_action_errors` of the 200 response. A schedule run appends the outcomes
-            to its outcome.
-          items:
-            $ref: "#/components/schemas/RequestedActionInput"
         external_refs:
           type: array
           nullable: true
           items:
             type: object
             additionalProperties: false
+            required: [tool, kind, ref]
+            description: Merged into the work item's external_refs (existing refs kept, no duplicates).
             properties:
               tool:
                 type: string
@@ -913,6 +1087,13 @@ components:
               label:
                 type: string
                 nullable: true
+              state:
+                type: string
+                nullable: true
+                description: >-
+                  State of the referenced work in its own tool. A reference without a state, or whose state is not
+                  terminal (closed, done, completed, merged, cancelled, failed, finished, succeeded, applied,
+                  destroyed, resolved), is open work and blocks dispatching the work item again.
     RunDeliveryDocument:
       type: object
       additionalProperties: false
@@ -1033,25 +1214,6 @@ components:
         hatchet_run_id:
           type: string
           nullable: true
-        requested_action_errors:
-          type: array
-          description: >-
-            Webhook run result only: JSON:API errors (title and source pointer) for requested actions that were
-            rejected and skipped. Omitted when there are none.
-          items:
-            type: object
-            additionalProperties: false
-            required: [title, source]
-            properties:
-              title:
-                type: string
-              source:
-                type: object
-                additionalProperties: false
-                required: [pointer]
-                properties:
-                  pointer:
-                    type: string
     ExecutionResource:
       type: object
       additionalProperties: false
@@ -1154,6 +1316,87 @@ components:
           type: object
           additionalProperties: false
           description: Present on GET /executions/{id}; the run's actions in id order.
+          properties:
+            actions:
+              type: array
+              items:
+                $ref: "#/components/schemas/ExecutionActionSummary"
+    ExecutionShowAttributes:
+      type: object
+      additionalProperties: false
+      required: [node_key, step, state, kind, outcome, failure_reason, started_at, finished_at, schedule_run_id]
+      properties:
+        node_key:
+          type: string
+          nullable: true
+        step:
+          type: integer
+          nullable: true
+          description: 1-based step of a schedule run; null for other runs.
+        state:
+          type: string
+        kind:
+          type: string
+          nullable: true
+        outcome:
+          type: string
+          nullable: true
+        failure_reason:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        schedule_run_id:
+          type: string
+          nullable: true
+        agent_role_id:
+          type: string
+          nullable: true
+        connection_id:
+          type: string
+          nullable: true
+        usage:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        applied_correction_ids:
+          type: array
+          items:
+            type: integer
+        hatchet_run_id:
+          type: string
+          nullable: true
+    ExecutionShowResource:
+      type: object
+      additionalProperties: false
+      required: [type, id, attributes, links]
+      properties:
+        type:
+          type: string
+          enum: [executions]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/ExecutionShowAttributes"
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
+    ExecutionShowDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ExecutionShowResource"
+        meta:
+          type: object
+          additionalProperties: false
+          description: The run's actions in id order.
           properties:
             actions:
               type: array
@@ -1266,6 +1509,13 @@ components:
             initiative_key:
               type: string
               nullable: true
+            dependencies:
+              type: array
+              description: >-
+                Present when the work item depends on others (`depends_on_ids`): for each dependency its id,
+                ref, title, status, final outcome and outputs.
+              items:
+                $ref: "#/components/schemas/RunDependency"
         assignment:
           type: object
           additionalProperties: false
@@ -1274,10 +1524,14 @@ components:
             goal:
               type: string
               description: >-
-                For an answer run: the instructions, the conversation's context record and its directly
-                related records, and the last 30 conversation messages as "Operator:" / "Assistant:"
-                lines, each truncated to 2000 characters. Return the reply in the delivery's answer
-                field. Role instructions, granted tools, rules and budget apply as for work runs.
+                For an answer run: the accepted body of the account's conversation procedure (a Standard of
+                kind `procedure`, key from the account's `conversation_answer_settings.procedure_key`),
+                which tells the agent to act with its granted tools; the conversation's context record and
+                its directly related records; the rolling summary of earlier messages when the conversation
+                is longer than the history window; and the last `history_limit` conversation messages as
+                "Operator:" / "Assistant:" lines, each truncated to `message_limit` characters (both
+                account data). While an answer run is active, follow-up operator messages are delivered
+                into it (see `listOperatorMessages`). Return the reply in the delivery's answer field. Role instructions, granted tools, rules and budget apply as for work runs.
                 For a schedule run: the step's procedure, the node, the node's Autonomat context as the
                 source of truth (no files or vault exist to read) and the results of earlier steps. A
                 product node's context holds purpose, stage, health and revenue, accepted documents
@@ -1295,6 +1549,20 @@ components:
             assigned_role:
               type: string
               nullable: true
+            limits:
+              type: object
+              additionalProperties: false
+              required: [timeout_ms]
+              description: >-
+                Limits of the run, from the role's `max_turns` and `run_timeout`. A run without a role gets the
+                default timeout (7200 seconds).
+              properties:
+                max_turns:
+                  type: integer
+                  description: Most agent turns. Absent when the role states no turn limit.
+                timeout_ms:
+                  type: integer
+                  description: Most milliseconds the run may take.
             budget:
               type: object
               nullable: true
@@ -1346,7 +1614,7 @@ components:
               interface:
                 type: string
                 enum: [cli, http, builtin, requested_action, unknown]
-                description: How the tool is invoked. `http` is a read-only GET of a URL. `requested_action` is not run by the agent; it is asked for in the result's `requested_actions` (see RunDeliveryAttributes).
+                description: How the tool is invoked. `http` is a read-only GET of a URL. `requested_action` is not run by the agent.
               command:
                 type: string
                 nullable: true
@@ -1498,13 +1766,37 @@ components:
             the operations a capability granted to its role lists by operationId (for example the allowed
             subcommands of a CLI capability), and only on records inside its node. A denied request
             returns 403 naming the operation. Each fetch of this document issues a new token and revokes the
-            earlier one. Absent for a run that is already terminal.
+            earlier one. Absent for a run that is already terminal. The token lives for the role's `run_timeout`
+            plus a fixed margin (`RUN_TOKEN_MARGIN_MINUTES`, default 15 minutes); a run without a role uses
+            the default timeout (7200 seconds).
           properties:
             token:
               type: string
             expires_at:
               type: string
               format: date-time
+        provided_values:
+          type: array
+          description: >-
+            Values a person provided to Inbox items that blocked this work item (the resolution of an item with a
+            typed `value_request` input), oldest item first. Absent when none were provided.
+          items:
+            type: object
+            additionalProperties: false
+            required: [inbox_item_id, label, use, value]
+            properties:
+              inbox_item_id:
+                type: string
+              label:
+                type: string
+              type:
+                type: string
+                description: The input type (text, number, date, choice or url).
+              use:
+                type: string
+                description: What Autonomat does with the value.
+              value:
+                type: string
         callback:
           type: object
           additionalProperties: false
@@ -1573,11 +1865,11 @@ components:
               x-required-by-category:
                 decision: ["question","context","options","recommendation","evidence","cost_of_waiting"]
                 approval: ["request","reason"]
-                access: ["steps","reason","unblocks","evidence","continuation"]
-                information: ["request","context","evidence","continuation"]
+                access: ["steps","reason","unblocks","evidence","continuation","value_request"]
+                information: ["request","context","evidence","continuation","value_request"]
                 review: ["request","context","evidence","continuation"]
                 attestation: ["request","context","evidence","continuation"]
-                external_action: ["steps","reason","unblocks","evidence","continuation"]
+                external_action: ["steps","reason","unblocks","evidence","continuation","value_request"]
               description: >
                 Only the given parts change; give at least one and none may be blank. An operator-owned pending
                 item must keep every part the account requires of its category (`GET /inbox_requirements`);
@@ -1617,6 +1909,8 @@ components:
                 cost_of_waiting:
                   type: string
                   description: What delay costs.
+                value_request:
+                  $ref: "#/components/schemas/InboxValueRequest"
     RunInboxResolutionAttributes:
       type: object
       additionalProperties: false
@@ -2230,6 +2524,513 @@ components:
               enum: [policies]
             attributes:
               $ref: "#/components/schemas/PolicyCreateAttributes"
+    StandardCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [key, kind, level]
+      description: "`body` and `summary` file a proposed revision of the new standard, which is accepted with `createStandardRevisionApplication`."
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+          enum: [decision, procedure]
+        level:
+          type: string
+          enum: [mandatory, default]
+        status:
+          type: string
+          enum: [active, superseded]
+        scope:
+          type: string
+        created_on:
+          type: string
+          description: Date, YYYY-MM-DD.
+        applies_when:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        verification:
+          type: string
+        supersedes_id:
+          type: string
+          description: Id of a standard of the account that this one supersedes.
+        body:
+          type: string
+        summary:
+          type: string
+    StandardCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [standards]
+            attributes:
+              $ref: "#/components/schemas/StandardCreateAttributes"
+    ScheduleCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [key, at, timezone, kind]
+      properties:
+        key:
+          type: string
+        at:
+          type: string
+          description: A 5-field cron expression or HH:MM, evaluated in `timezone`.
+        timezone:
+          type: string
+        kind:
+          type: string
+          enum: [standard, reality-review]
+        description:
+          type: string
+        steps:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              $ref: "#/components/schemas/JsonValue"
+        enabled:
+          type: boolean
+        max_concurrent_runs:
+          type: integer
+          minimum: 1
+    ScheduleCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [schedules]
+            attributes:
+              $ref: "#/components/schemas/ScheduleCreateAttributes"
+    ScheduleRunAttributes:
+      type: object
+      additionalProperties: false
+      required: [schedule_id, state, current_step_index, result, occurrence_at, occurrence_date, started_at, finished_at]
+      description: A cancelled run is `failed` with the result `Cancelled`.
+      properties:
+        schedule_id:
+          type: string
+        state:
+          type: string
+          enum: [pending, running, completed, failed]
+        current_step_index:
+          type: integer
+        result:
+          type: string
+          nullable: true
+        occurrence_at:
+          type: string
+          format: date-time
+        occurrence_date:
+          type: string
+          description: Local calendar date of the occurrence.
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+    ScheduleRunRelationships:
+      type: object
+      additionalProperties: false
+      required: [executions]
+      properties:
+        executions:
+          type: object
+          additionalProperties: false
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ResourceIdentifier"
+    ScheduleRunResource:
+      type: object
+      additionalProperties: false
+      required: [type, id, attributes, links]
+      properties:
+        type:
+          type: string
+          enum: [schedule-runs]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/ScheduleRunAttributes"
+        relationships:
+          $ref: "#/components/schemas/ScheduleRunRelationships"
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
+    ScheduleRunDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ScheduleRunResource"
+    ScheduleRunsDocument:
+      type: object
+      additionalProperties: false
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleRunResource"
+        links:
+          $ref: "#/components/schemas/CollectionLinks"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    RoutingRuleAttributes:
+      type: object
+      additionalProperties: false
+      required: [key, priority, scope, matches, enabled, agent_role_id, archived_at, created_at, updated_at]
+      properties:
+        key:
+          type: string
+        priority:
+          type: integer
+          description: Higher values take precedence.
+        scope:
+          type: string
+        matches:
+          $ref: "#/components/schemas/JsonValue"
+        enabled:
+          type: boolean
+        agent_role_id:
+          type: string
+        archived_at:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    RoutingRuleResource:
+      type: object
+      additionalProperties: false
+      required: [type, id, attributes, links]
+      properties:
+        type:
+          type: string
+          enum: [routing-rules]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/RoutingRuleAttributes"
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
+    RoutingRuleDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/RoutingRuleResource"
+    RoutingRulesDocument:
+      type: object
+      additionalProperties: false
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoutingRuleResource"
+        links:
+          $ref: "#/components/schemas/CollectionLinks"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    RoutingRuleWriteAttributes:
+      type: object
+      additionalProperties: false
+      description: "`key` is set on create and cannot change. `archived_at` is not writable; archive with DELETE."
+      properties:
+        priority:
+          type: integer
+        scope:
+          type: string
+        matches:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        enabled:
+          type: boolean
+        agent_role_id:
+          type: string
+          description: Id of an agent role of the account.
+    RoutingRuleCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [key, scope, agent_role_id]
+      properties:
+        key:
+          type: string
+        priority:
+          type: integer
+        scope:
+          type: string
+        matches:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        enabled:
+          type: boolean
+        agent_role_id:
+          type: string
+          description: Id of an agent role of the account.
+    RoutingRuleWriteDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [routing-rules]
+            attributes:
+              $ref: "#/components/schemas/RoutingRuleWriteAttributes"
+    RoutingRuleCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [routing-rules]
+            attributes:
+              $ref: "#/components/schemas/RoutingRuleCreateAttributes"
+    WorkTrackerAttributes:
+      type: object
+      additionalProperties: false
+      required: [tool, kind, connection_kind, connection_id, state_url_template, state_path, terminal_path, cost_amount_path, cost_currency_path, cost_final_path, status_map, inbox_states, inbox_reason_path, archived_at, created_at, updated_at]
+      properties:
+        tool:
+          type: string
+        kind:
+          type: string
+        connection_kind:
+          type: string
+          description: The connection kind used to read the work (for example loopcontrol).
+        connection_id:
+          type: string
+          nullable: true
+          description: The connection this tracker reads through, an active connection of the account with the tracker's connection_kind. Null selects the account's first verified connection of that kind.
+        state_url_template:
+          type: string
+          description: A path on the connection that contains {ref}; the host always comes from the connection.
+        state_path:
+          type: string
+        terminal_path:
+          type: string
+          nullable: true
+        cost_amount_path:
+          type: string
+          nullable: true
+        cost_currency_path:
+          type: string
+          nullable: true
+        cost_final_path:
+          type: string
+          nullable: true
+        status_map:
+          type: object
+          description: External state to work item status.
+          additionalProperties:
+            type: string
+        inbox_states:
+          type: array
+          items:
+            type: string
+        inbox_reason_path:
+          type: string
+          nullable: true
+        archived_at:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    WorkTrackerResource:
+      type: object
+      additionalProperties: false
+      required: [type, id, attributes, links]
+      properties:
+        type:
+          type: string
+          enum: [work-trackers]
+        id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/WorkTrackerAttributes"
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
+    WorkTrackerDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/WorkTrackerResource"
+    WorkTrackersDocument:
+      type: object
+      additionalProperties: false
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkTrackerResource"
+        links:
+          $ref: "#/components/schemas/CollectionLinks"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    WorkTrackerWriteAttributes:
+      type: object
+      additionalProperties: false
+      description: "`archived_at` is not writable; archive with DELETE."
+      properties:
+        tool:
+          type: string
+        kind:
+          type: string
+        connection_kind:
+          type: string
+          description: The connection kind used to read the work (for example loopcontrol).
+        connection_id:
+          type: string
+          nullable: true
+          description: The connection this tracker reads through, an active connection of the account with the tracker's connection_kind. Null selects the account's first verified connection of that kind.
+        state_url_template:
+          type: string
+          description: A path on the connection that contains {ref}; the host always comes from the connection.
+        state_path:
+          type: string
+        terminal_path:
+          type: string
+          nullable: true
+        cost_amount_path:
+          type: string
+          nullable: true
+        cost_currency_path:
+          type: string
+          nullable: true
+        cost_final_path:
+          type: string
+          nullable: true
+        status_map:
+          type: object
+          description: External state to work item status.
+          additionalProperties:
+            type: string
+        inbox_states:
+          type: array
+          items:
+            type: string
+        inbox_reason_path:
+          type: string
+          nullable: true
+    WorkTrackerCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [tool, kind, connection_kind, state_url_template, state_path]
+      description: "`archived_at` is not writable; archive with DELETE."
+      properties:
+        tool:
+          type: string
+        kind:
+          type: string
+        connection_kind:
+          type: string
+          description: The connection kind used to read the work (for example loopcontrol).
+        connection_id:
+          type: string
+          nullable: true
+          description: The connection this tracker reads through, an active connection of the account with the tracker's connection_kind. Null selects the account's first verified connection of that kind.
+        state_url_template:
+          type: string
+          description: A path on the connection that contains {ref}; the host always comes from the connection.
+        state_path:
+          type: string
+        terminal_path:
+          type: string
+          nullable: true
+        cost_amount_path:
+          type: string
+          nullable: true
+        cost_currency_path:
+          type: string
+          nullable: true
+        cost_final_path:
+          type: string
+          nullable: true
+        status_map:
+          type: object
+          description: External state to work item status.
+          additionalProperties:
+            type: string
+        inbox_states:
+          type: array
+          items:
+            type: string
+        inbox_reason_path:
+          type: string
+          nullable: true
+    WorkTrackerWriteDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [work-trackers]
+            attributes:
+              $ref: "#/components/schemas/WorkTrackerWriteAttributes"
+    WorkTrackerCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [work-trackers]
+            attributes:
+              $ref: "#/components/schemas/WorkTrackerCreateAttributes"
     CapabilityIdentifier:
       type: object
       additionalProperties: false
@@ -2751,6 +3552,18 @@ components:
         key:
           type: string
           nullable: true
+        max_turns:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Most agent turns a run of this role may take. Null states no turn limit.
+        run_timeout:
+          type: integer
+          minimum: 1
+          default: 7200
+          description: >-
+            Seconds a run of this role may take. Sent as `assignment.limits.timeout_ms` (milliseconds) and,
+            plus a fixed margin (`RUN_TOKEN_MARGIN_MINUTES`, default 15), the lifetime of the run's API token.
         capability_ids:
           type: array
           items:
@@ -2790,10 +3603,13 @@ components:
     OperatorMessageAttributes:
       type: object
       additionalProperties: false
-      required: [body, created_at]
+      required: [body, conversation_id, created_at]
       properties:
         body:
           type: string
+        conversation_id:
+          type: integer
+          description: The conversation the message belongs to.
         work_item_id:
           type: integer
           nullable: true
@@ -3048,6 +3864,51 @@ components:
         consequence:
           type: string
           description: What happens when this option is chosen.
+    InboxValueRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, label]
+      description: >
+        How a value an item asks a person for is delivered. `kind: input` is a typed field on the item itself
+        (`type` text, number, date, choice or url; `required`; `options` for a choice; a `format_hint`; and `use`,
+        what Autonomat does with the value); the value the operator provides is stored on the resolution and
+        handed to the work that continues. `kind: place` names an exact place to deliver to (`location`: screen
+        and field, or external system and location) with an optional `link` (an Autonomat path or an http(s) URL);
+        the operator marks the item complete. Secrets are never entered into an item: an input of type `secret`, or an
+        input whose label, format_hint or use asks for a password, passphrase, API key, secret, token or credential,
+        is a 422 pointing at `/data/attributes/value_request`, and a place that asks for one must link to an Autonomat
+        connection screen (`/settings/connections` or `/settings/model_access`).
+      properties:
+        kind:
+          type: string
+          enum: [input, place]
+        label:
+          type: string
+        type:
+          type: string
+          enum: [text, number, date, choice, url]
+          description: The type of an input.
+        required:
+          type: boolean
+          default: true
+        options:
+          type: array
+          items:
+            type: string
+          description: The allowed values of a choice input (at least two).
+        format_hint:
+          type: string
+          description: The format an input expects.
+        use:
+          type: string
+          description: What Autonomat does with the provided value.
+        location:
+          type: string
+          description: Exactly where to deliver, for a place.
+        link:
+          type: string
+          nullable: true
+          description: An Autonomat path or an http(s) URL, for a place.
     InboxOptions:
       type: array
       description: >
@@ -3074,18 +3935,18 @@ components:
               x-required-by-category:
                 decision: ["question","context","options","recommendation","evidence","cost_of_waiting"]
                 approval: ["request","reason"]
-                access: ["steps","reason","unblocks","evidence","continuation"]
-                information: ["request","context","evidence","continuation"]
+                access: ["steps","reason","unblocks","evidence","continuation","value_request"]
+                information: ["request","context","evidence","continuation","value_request"]
                 review: ["request","context","evidence","continuation"]
                 attestation: ["request","context","evidence","continuation"]
-                external_action: ["steps","reason","unblocks","evidence","continuation"]
+                external_action: ["steps","reason","unblocks","evidence","continuation","value_request"]
               required: [category]
               description: >
                 Files an operator-owned pending item. Which parts a category needs is account data
                 (`GET /inbox_requirements`). The defaults are decision: question, context, options (2 to 4,
                 each with a consequence), recommendation (naming an option key), evidence, cost_of_waiting;
-                external_action and access: steps, reason, unblocks, evidence, continuation; approval: request,
-                reason; information, review and attestation: request, context, evidence, continuation.
+                external_action and access: steps, reason, unblocks, evidence, continuation, value_request; approval: request,
+                reason; information: request, context, evidence, continuation, value_request; review and attestation: request, context, evidence, continuation.
                 A missing or blank required part is a 422 with one `source.pointer` (`/data/attributes/<part>`) per part; a value that is not a string (any part but `options`) is a 422 pointing at that attribute and nothing is stored. `x-required-by-category` states the default required parts per category.
               properties:
                 category:
@@ -3128,6 +3989,8 @@ components:
                 cost_of_waiting:
                   type: string
                   description: What delay costs.
+                value_request:
+                  $ref: "#/components/schemas/InboxValueRequest"
     InboxRequirementsAttributes:
       type: object
       additionalProperties: false
@@ -3152,7 +4015,7 @@ components:
       type: array
       items:
         type: string
-        enum: [title, question, context, options, steps, request, reason, unblocks, evidence, recommendation, continuation, denial_continuation, cost_of_waiting]
+        enum: [title, question, context, options, steps, request, reason, unblocks, evidence, recommendation, continuation, denial_continuation, cost_of_waiting, value_request]
     InboxRequirementsResource:
       type: object
       additionalProperties: false
@@ -3203,7 +4066,7 @@ components:
       additionalProperties: false
       required: [title, status, category, owner, ref, request, reason, evidence, prepared_result, governing_policy,
                  continuation, denial_continuation, cause_key, requested_value_label, question, context, options,
-                 steps, unblocks, cost_of_waiting, recommendation, required_parts, missing_parts, call, call_result,
+                 steps, unblocks, cost_of_waiting, value_request, recommendation, required_parts, missing_parts, call, call_result,
                  created_at, updated_at, origin, work_item_id, execution_id, resolution]
       properties:
         title:
@@ -3264,6 +4127,10 @@ components:
           nullable: true
         cost_of_waiting:
           type: string
+          nullable: true
+        value_request:
+          allOf:
+            - $ref: "#/components/schemas/InboxValueRequest"
           nullable: true
         recommendation:
           type: string
@@ -3585,10 +4452,28 @@ components:
           $ref: "#/components/schemas/CollectionLinks"
         meta:
           $ref: "#/components/schemas/PageMeta"
+    ProductExternalRef:
+      type: object
+      additionalProperties: false
+      description: A reference to a resource in another tool, such as the product's LoopControl project (tool loopcontrol, kind project) or a repository.
+      required: [tool, kind, ref]
+      properties:
+        tool:
+          type: string
+        kind:
+          type: string
+        ref:
+          type: string
+        url:
+          type: string
+          nullable: true
+        label:
+          type: string
+          nullable: true
     ProductResourceAttributes:
       type: object
       additionalProperties: false
-      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, parent_id, created_at, updated_at]
+      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, external_refs, parent_id, created_at, updated_at]
       properties:
         name:
           type: string
@@ -3631,6 +4516,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KeyMetric"
+        external_refs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductExternalRef"
         parent_id:
           type: string
           nullable: true
@@ -3692,10 +4581,47 @@ components:
           description: Replaces the product's key metrics.
           items:
             $ref: "#/components/schemas/KeyMetric"
+        external_refs:
+          type: array
+          description: Replaces the product's external references. Each entry has tool, kind and ref as non-blank strings and optionally url and label.
+          items:
+            $ref: "#/components/schemas/ProductExternalRef"
         parent_id:
           type: string
           nullable: true
           description: A product of the account that is not archived, not the product itself and not one of its descendants; null clears the parent.
+    ProductCreateAttributes:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+        purpose:
+          type: string
+          nullable: true
+        next_action:
+          type: string
+          nullable: true
+        key:
+          type: string
+          nullable: true
+          description: Stable identifier, unique per account; cannot be changed afterwards.
+    ProductCreateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [products]
+            attributes:
+              $ref: "#/components/schemas/ProductCreateAttributes"
     ProductUpdateDocument:
       type: object
       additionalProperties: false
@@ -3978,7 +4904,7 @@ components:
         context_type:
           type: string
           nullable: true
-          description: The kind of record the conversation is about (Product, Initiative, Refinement, WorkItem or InboxItem); null for a global conversation.
+          description: The kind of record the conversation is about (Account for the portfolio root, Product, Initiative, Refinement, WorkItem or InboxItem); null only for conversations stored before the Account root existed.
         context_id:
           type: string
           nullable: true
@@ -4051,8 +4977,8 @@ components:
           type: string
         context_type:
           type: string
-          enum: [Product, Initiative, Refinement, WorkItem, InboxItem]
-          description: The kind of record the conversation is about; requires context_id.
+          enum: [Account, Product, Initiative, Refinement, WorkItem, InboxItem]
+          description: The kind of record the conversation is about; requires context_id. Account is the portfolio root and its context_id is the id of the caller's own account.
         context_id:
           type: string
           description: The id of the record the conversation is about; requires context_type.
@@ -4224,6 +5150,18 @@ paths:
                         default_connection_id:
                           type: string
                           nullable: true
+                        work_sync_interval_minutes:
+                          type: integer
+                          minimum: 1
+                          description: Minutes between work tracker syncs (at least 1).
+                        work_item_status_map:
+                          $ref: "#/components/schemas/WorkItemStatusMap"
+                        conversation_answer_settings:
+                          $ref: "#/components/schemas/ConversationAnswerSettings"
+                        work_item_procedure_key:
+                          type: string
+                        external_ref_display_rules:
+                          $ref: "#/components/schemas/ExternalRefDisplayRules"
       x-scenarios:
         - id: authorized_success
           status: 200
@@ -4260,6 +5198,56 @@ paths:
             data:
               attributes:
                 name: ""
+        - id: invalid_status_map
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                work_item_status_map:
+                  completed: not-a-status
+        - id: procedure_key_updated
+          status: 200
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                work_item_procedure_key: custom-dispatch
+        - id: invalid_procedure_key
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                work_item_procedure_key: ""
+        - id: display_rules_updated
+          status: 200
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                external_ref_display_rules:
+                  rules:
+                    - kinds: [repository]
+                      template: "Repo {ref}"
+                  fallback: "{tool} {kind}: {ref}"
+        - id: invalid_display_rules
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                external_ref_display_rules:
+                  rules: []
+                  fallback: no placeholder
+        - id: invalid_conversation_answer_settings
+          status: 422
+          auth: apiToken
+          body:
+            data:
+              attributes:
+                conversation_answer_settings:
+                  history_limit: 0
       responses:
         "200":
           description: Updated account document
@@ -4617,7 +5605,7 @@ paths:
           x-qualifiers:
             - key: status
               type: enum
-              values: ["open","closed","cancelled","queued","sent","running","finished","failed"]
+              values: ["open","closed","cancelled","queued","sent","running","finished","failed","done","in_progress","ready"]
               description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
             - key: product
               type: reference
@@ -4811,6 +5799,10 @@ paths:
           required: true
           schema:
             type: string
+      x-run-targets:
+        - model: WorkItem
+          in: path
+          key: id
       x-scenarios:
         - id: found
           status: 200
@@ -4887,7 +5879,7 @@ paths:
                           type: string
                         status:
                           type: string
-                          enum: [open, closed, cancelled, queued, sent, running, finished, failed]
+                          enum: [open, closed, cancelled, queued, sent, running, finished, failed, done, in_progress, ready]
                         agent_role_id:
                           type: string
                           nullable: true
@@ -4896,6 +5888,11 @@ paths:
                           type: string
                           nullable: true
                           maxLength: 2000
+                        depends_on_ids:
+                          type: array
+                          description: Ids of work items of the account this item waits on; unknown ids, the item itself and cycles are rejected.
+                          items:
+                            type: integer
       x-run-targets:
         - model: WorkItem
           in: path
@@ -4941,6 +5938,16 @@ paths:
           auth: apiToken
           params: {"id": "~fixture:work_items:initiative_item_auto"}
           body: {"data": {"attributes": {"status": "bogus"}}}
+        - id: unknown_dependency
+          status: 422
+          auth: apiToken
+          params: {"id": "~fixture:work_items:initiative_item_auto"}
+          body: {"data": {"type": "work-items", "attributes": {"depends_on_ids": [0]}}}
+        - id: dependency_on_itself
+          status: 422
+          auth: apiToken
+          params: {"id": "~fixture:work_items:initiative_item_auto"}
+          body: {"data": {"type": "work-items", "attributes": {"depends_on_ids": ["~fixture:work_items:initiative_item_auto"]}}}
         - id: malformed_json
           status: 422
           auth: apiToken
@@ -5288,6 +6295,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -5358,6 +6366,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -5493,6 +6502,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -6168,6 +7178,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-scenarios:
@@ -6340,8 +7351,7 @@ paths:
         edited with `GET`/`PATCH /inbox_requirements`; the defaults are decision: question, context, options
         (2 to 4, each with a consequence), recommendation (naming an option key), evidence, cost_of_waiting;
         external_action and access: steps, reason, unblocks, evidence, continuation (what Autonomat does after
-        the item is marked complete, and how it checks the result); approval: request, reason; information,
-        review and attestation: request, context, evidence, continuation. A missing or blank required part is a
+        the item is marked complete, and how it checks the result), value_request (how a value is delivered: a typed input or an exact place); approval: request, reason; information: request, context, evidence, continuation, value_request; review and attestation: request, context, evidence, continuation. A missing or blank required part is a
         422 whose errors list every missing part, each with `source.pointer` `/data/attributes/<part>`; so is
         a recommendation that names no option, a malformed option and a duplicate `cause_key`. A run token files
         the item at its node; an account token files it for the account.
@@ -6380,6 +7390,18 @@ paths:
           status: 422
           auth: apiToken
           body: {"data": {"type": "inbox-items", "attributes": {"category": "chore"}}}
+        - id: secret_input_rejected
+          status: 422
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "information", "request": "Provide the token", "context": "Needed.", "evidence": "None.", "continuation": "Autonomat uses it.", "value_request": {"kind": "input", "label": "API key", "type": "text", "format_hint": "Paste it", "use": "Call the service"}}}}
+        - id: place_accepted
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "external_action", "steps": "Renew the domain.", "reason": "Only the owner can log in.", "unblocks": "The launch.", "evidence": "Renewal is due.", "continuation": "Autonomat checks the DNS record.", "value_request": {"kind": "place", "label": "Registrar renewal", "location": "Registrar dashboard, Domains, example.com", "link": "https://registrar.example.com"}}}}
+        - id: missing_value_request
+          status: 422
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "access", "steps": "Grant access.", "reason": "Only the owner can.", "unblocks": "The launch.", "evidence": "Denied.", "continuation": "Autonomat retries."}}}
       responses:
         "201":
           description: The filed Inbox item
@@ -7416,6 +8438,7 @@ paths:
         - name: initiative_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -7518,6 +8541,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: document_id
@@ -7673,6 +8697,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: document_id
@@ -7777,6 +8802,149 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /products/{product_id}/documents/{document_id}/revisions/{revision_id}/application:
+    post:
+      summary: Apply (accept) a proposed revision of a product document; it becomes the accepted revision
+      operationId: createDocumentRevisionApplication
+      security:
+        - apiToken: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+        - name: document_id
+          in: path
+          required: true
+          description: Product document id.
+          schema:
+            type: string
+        - name: revision_id
+          in: path
+          required: true
+          description: Revision id.
+          schema:
+            type: string
+      x-run-targets:
+        - model: Product
+          in: path
+          key: product_id
+        - model: ProductDocument
+          in: path
+          key: document_id
+      x-scenarios:
+        - id: applied
+          status: 200
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: already_applied
+          status: 200
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_icp"
+            revision_id: "~fixture:document_revisions:icp_rev1"
+        - id: run_token
+          status: 200
+          auth: runToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            product_id: "~fixture:products:live_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: document_not_found
+          status: 404
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "0"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: revision_not_found
+          status: 404
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: rejected
+          status: 422
+          auth: apiToken
+          prepare: rejectedDocumentRevision
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            product_id: "~fixture:products:alpha_product"
+            document_id: "~fixture:product_documents:alpha_prd"
+            revision_id: "~fixture:document_revisions:prd_rev1"
+          raw_body: "{\"data\": "
+      responses:
+        "200":
+          description: The applied revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevisionResourceDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The revision was rejected and cannot be applied, or invalid input
           content:
             application/vnd.api+json:
               schema:
@@ -7899,6 +9067,72 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a product
+      operationId: createProduct
+      x-model: Product
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/ProductCreateDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "products", "attributes": {"name": "Created through the API", "purpose": "Proves the contract", "key": "api-created"}}}
+        - id: run_created
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "products", "attributes": {"name": "Created by a run"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          body: {"data": {"type": "products", "attributes": {"name": "Created through the API"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "products", "attributes": {"name": "Created through the API"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          body: {"data": {"type": "products", "attributes": {"name": "Created through the API"}}}
+        - id: validation_error
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"name": ""}}}
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: '{"data": '
+      responses:
+        "201":
+          description: Product created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ProductResourceDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or a run outside the account root (a product is created at the root)
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: "Invalid input: validation error, or the request body is not a JSON:API document"
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /products/{id}:
     get:
       summary: Get a product
@@ -7909,6 +9143,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -7991,6 +9226,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -8010,6 +9246,18 @@ paths:
           params:
             id: "~fixture:products:alpha_product"
           body: {"data": {"type": "products", "attributes": {"name": "Alpha Renamed", "purpose": "Sharper purpose", "next_action": "Ship it", "daily_budget": {"amount_minor": 5000, "currency": "USD"}, "parent_id": null}}}
+        - id: external_refs_replaced
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:products:alpha_product"
+          body: {"data": {"type": "products", "attributes": {"external_refs": [{"tool": "loopcontrol", "kind": "project", "ref": "42", "url": "https://loopcontrol.example.com/projects/42", "label": "Alpha"}]}}}
+        - id: external_refs_invalid
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:products:alpha_product"
+          body: {"data": {"type": "products", "attributes": {"external_refs": [{"tool": "loopcontrol", "kind": "project", "extra": "x"}]}}}
         - id: granted
           status: 200
           auth: runToken
@@ -8128,6 +9376,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -8218,6 +9467,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: page[number]
@@ -8333,6 +9583,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: q
@@ -8474,6 +9725,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: id
@@ -8584,6 +9836,7 @@ paths:
         - name: product_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: document_id
@@ -8702,6 +9955,7 @@ paths:
         - name: standard_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: q
@@ -8767,8 +10021,8 @@ paths:
           auth: runTokenUngranted
           params:
             standard_id: "~fixture:standards:acme_standard_full"
-        - id: outside_node
-          status: 403
+        - id: initiative_node_reads_account_wide
+          status: 200
           auth: runTokenInitiativeNode
           params:
             standard_id: "~fixture:standards:acme_standard_full"
@@ -8835,6 +10089,7 @@ paths:
         - name: standard_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -8923,6 +10178,131 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /standards/{standard_id}/revisions/{revision_id}/application:
+    post:
+      summary: Apply (accept) a proposed revision of a standard; it becomes the accepted revision
+      operationId: createStandardRevisionApplication
+      security:
+        - apiToken: []
+      parameters:
+        - name: standard_id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+        - name: revision_id
+          in: path
+          required: true
+          description: Revision id.
+          schema:
+            type: string
+      x-run-targets:
+        - model: Standard
+          in: path
+          key: standard_id
+      x-scenarios:
+        - id: applied
+          status: 200
+          auth: apiToken
+          prepare: proposedStandardRevision
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: already_applied
+          status: 200
+          auth: apiToken
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: run_token
+          status: 200
+          auth: runToken
+          prepare: proposedStandardRevision
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: standard_not_found
+          status: 404
+          auth: apiToken
+          params:
+            standard_id: "0"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: revision_not_found
+          status: 404
+          auth: apiToken
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: rejected
+          status: 422
+          auth: apiToken
+          prepare: rejectedStandardRevision
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            standard_id: "~fixture:standards:acme_standard_full"
+            revision_id: "~fixture:document_revisions:acme_standard_revision"
+          raw_body: "{\"data\": "
+      responses:
+        "200":
+          description: The applied revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/StandardRevisionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The revision was rejected and cannot be applied, or invalid input
           content:
             application/vnd.api+json:
               schema:
@@ -9035,6 +10415,80 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a standard; a body files a proposed revision to apply
+      operationId: createStandard
+      x-model: Standard
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/StandardCreateDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "standards", "attributes": {"key": "api-created-standard", "kind": "decision", "level": "default", "status": "active", "scope": "portfolio", "applies_when": {"kind": ["report"]}, "verification": "CI is green", "created_on": "2026-10-31", "supersedes_id": "~fixture:standards:acme_standard", "body": "Use HTTPS everywhere", "summary": "Initial wording"}}}
+        - id: run_token
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "standards", "attributes": {"key": "api-created-standard", "kind": "decision", "level": "default", "status": "active", "scope": "portfolio", "applies_when": {"kind": ["report"]}, "verification": "CI is green", "created_on": "2026-10-31", "supersedes_id": "~fixture:standards:acme_standard", "body": "Use HTTPS everywhere", "summary": "Initial wording"}}}
+        - id: unauthorized
+          status: 401
+          auth: none
+          body: {"data": {"type": "standards", "attributes": {"key": "api-created-standard", "kind": "decision", "level": "default", "status": "active", "scope": "portfolio", "applies_when": {"kind": ["report"]}, "verification": "CI is green", "created_on": "2026-10-31", "supersedes_id": "~fixture:standards:acme_standard", "body": "Use HTTPS everywhere", "summary": "Initial wording"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "standards", "attributes": {"key": "api-created-standard", "kind": "decision", "level": "default", "status": "active", "scope": "portfolio", "applies_when": {"kind": ["report"]}, "verification": "CI is green", "created_on": "2026-10-31", "supersedes_id": "~fixture:standards:acme_standard", "body": "Use HTTPS everywhere", "summary": "Initial wording"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          body: {"data": {"type": "standards", "attributes": {"key": "api-created-standard", "kind": "decision", "level": "default", "status": "active", "scope": "portfolio", "applies_when": {"kind": ["report"]}, "verification": "CI is green", "created_on": "2026-10-31", "supersedes_id": "~fixture:standards:acme_standard", "body": "Use HTTPS everywhere", "summary": "Initial wording"}}}
+        - id: invalid_input
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "bad-standard", "kind": "bogus", "level": "default"}}}
+        - id: foreign_supersedes
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "bad-supersedes", "kind": "decision", "level": "default", "supersedes_id": "~fixture:standards:other_corp_standard"}}}
+        - id: wrong_type
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "typed", "kind": "decision", "level": "default", "applies_when": "x"}}}
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: "{\"data\": "
+      responses:
+        "201":
+          description: Standard created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/StandardDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or account records are created from the account root only
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /standards/{id}:
     get:
       summary: Get a standard with its accepted revision and verification
@@ -9045,6 +10499,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -9072,8 +10527,8 @@ paths:
           auth: runTokenUngranted
           params:
             id: "~fixture:standards:acme_standard_full"
-        - id: outside_node
-          status: 403
+        - id: initiative_node_reads_account_wide
+          status: 200
           auth: runTokenInitiativeNode
           params:
             id: "~fixture:standards:acme_standard_full"
@@ -9122,6 +10577,7 @@ paths:
         - name: standard_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: id
@@ -9158,8 +10614,8 @@ paths:
           params:
             standard_id: "~fixture:standards:acme_standard_full"
             id: "~fixture:document_revisions:acme_standard_revision"
-        - id: outside_node
-          status: 403
+        - id: initiative_node_reads_account_wide
+          status: 200
           auth: runTokenInitiativeNode
           params:
             standard_id: "~fixture:standards:acme_standard_full"
@@ -9387,6 +10843,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -9414,8 +10871,8 @@ paths:
           auth: runTokenUngranted
           params:
             id: "~fixture:policies:acme_policy"
-        - id: outside_node
-          status: 403
+        - id: initiative_node_reads_account_wide
+          status: 200
           auth: runTokenInitiativeNode
           params:
             id: "~fixture:policies:acme_policy"
@@ -9464,6 +10921,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -9571,6 +11029,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -9646,6 +11105,436 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+  /work_trackers:
+    get:
+      summary: List work trackers
+      operationId: listWorkTrackers
+      security:
+        - apiToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            Typed filter query. Example: `tool:loopcontrol sort:tool-asc`. Archived trackers are not listed.
+            Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: tool
+              type: text
+              description: "Case-insensitive substring of tool; several values separated by commas match any of them."
+            - key: kind
+              type: text
+              description: "Case-insensitive substring of kind; several values separated by commas match any of them."
+            - key: sort
+              type: sort
+              values: ["tool-asc","tool-desc","kind-asc","kind-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+          schema:
+            type: string
+        - name: "page[number]"
+          in: query
+          required: false
+          description: Page number, starting at 1 (default 1).
+          schema:
+            type: integer
+            minimum: 1
+        - name: "page[size]"
+          in: query
+          required: false
+          description: Page size (default 25, at most 100).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: filtered
+          status: 200
+          auth: apiToken
+          query: {"q": "tool:loopcontrol"}
+        - id: run_token
+          status: 200
+          auth: runToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+        - id: invalid_qualifier
+          status: 422
+          auth: apiToken
+          query: {"q": "badqualifier:x"}
+        - id: invalid_page
+          status: 422
+          auth: apiToken
+          query: {"page": {"size": "0"}}
+      responses:
+        "200":
+          description: Work trackers collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkTrackersDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a work tracker
+      operationId: createWorkTracker
+      x-model: WorkTracker
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/WorkTrackerCreateDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "work-trackers", "attributes": {"tool": "billing", "kind": "invoice", "connection_kind": "billingcontrol", "state_url_template": "/api/invoices/{ref}", "state_path": "data.status", "terminal_path": "data.closed", "status_map": {"paid": "closed"}, "inbox_states": ["disputed"]}}}
+        - id: run_token
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "work-trackers", "attributes": {"tool": "billing", "kind": "invoice", "connection_kind": "billingcontrol", "state_url_template": "/api/invoices/{ref}", "state_path": "data.status", "terminal_path": "data.closed", "status_map": {"paid": "closed"}, "inbox_states": ["disputed"]}}}
+        - id: unauthorized
+          status: 401
+          auth: none
+          body: {"data": {"type": "work-trackers", "attributes": {"tool": "billing", "kind": "invoice", "connection_kind": "billingcontrol", "state_url_template": "/api/invoices/{ref}", "state_path": "data.status", "terminal_path": "data.closed", "status_map": {"paid": "closed"}, "inbox_states": ["disputed"]}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "work-trackers", "attributes": {"tool": "billing", "kind": "invoice", "connection_kind": "billingcontrol", "state_url_template": "/api/invoices/{ref}", "state_path": "data.status", "terminal_path": "data.closed", "status_map": {"paid": "closed"}, "inbox_states": ["disputed"]}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          body: {"data": {"type": "work-trackers", "attributes": {"tool": "billing", "kind": "invoice", "connection_kind": "billingcontrol", "state_url_template": "/api/invoices/{ref}", "state_path": "data.status", "terminal_path": "data.closed", "status_map": {"paid": "closed"}, "inbox_states": ["disputed"]}}}
+        - id: invalid_input
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"tool": ""}}}
+        - id: wrong_type
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"tool": "x", "status_map": "paid"}}}
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: "{\"data\": "
+      responses:
+        "201":
+          description: Work tracker created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkTrackerDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /work_trackers/{id}:
+    get:
+      summary: Get a work tracker
+      operationId: getWorkTracker
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: WorkTracker
+          in: path
+          key: id
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: run_token
+          status: 200
+          auth: runToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+      responses:
+        "200":
+          description: Work tracker resource
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkTrackerDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update a work tracker
+      operationId: updateWorkTracker
+      x-model: WorkTracker
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/WorkTrackerWriteDocument"
+      x-run-targets:
+        - model: WorkTracker
+          in: path
+          key: id
+      x-scenarios:
+        - id: updated
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: run_token
+          status: 200
+          auth: runToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"state_path": "data.attributes.state", "inbox_states": ["blocked"]}}}
+        - id: invalid_input
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"attributes": {"state_url_template": "no placeholder"}}}
+        - id: wrong_type
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"attributes": {"inbox_states": "blocked"}}}
+      responses:
+        "200":
+          description: Work tracker updated
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkTrackerDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Archive a work tracker (its record and history are kept)
+      operationId: archiveWorkTracker
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: WorkTracker
+          in: path
+          key: id
+      x-scenarios:
+        - id: archived
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: run_token
+          status: 204
+          auth: runToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          raw_body: "{\"data\": "
+      responses:
+        "204":
+          description: Work tracker archived
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /agent_roles/{agent_role_id}/relationships/capabilities:
     get:
       summary: List the capabilities granted to an agent role
@@ -9656,6 +11545,7 @@ paths:
         - name: agent_role_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
         - name: q
@@ -9792,6 +11682,7 @@ paths:
         - name: agent_role_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -9901,6 +11792,7 @@ paths:
         - name: agent_role_id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -10105,6 +11997,76 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a schedule
+      operationId: createSchedule
+      x-model: Schedule
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/ScheduleCreateDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "schedules", "attributes": {"key": "api-created-schedule", "at": "30 7 * * 1-5", "timezone": "UTC", "kind": "standard", "description": "Created through the API", "steps": [{"procedure": "morning-review", "nodes": "root"}], "enabled": true, "max_concurrent_runs": 2}}}
+        - id: run_token
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "schedules", "attributes": {"key": "api-created-schedule", "at": "30 7 * * 1-5", "timezone": "UTC", "kind": "standard", "description": "Created through the API", "steps": [{"procedure": "morning-review", "nodes": "root"}], "enabled": true, "max_concurrent_runs": 2}}}
+        - id: unauthorized
+          status: 401
+          auth: none
+          body: {"data": {"type": "schedules", "attributes": {"key": "api-created-schedule", "at": "30 7 * * 1-5", "timezone": "UTC", "kind": "standard", "description": "Created through the API", "steps": [{"procedure": "morning-review", "nodes": "root"}], "enabled": true, "max_concurrent_runs": 2}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "schedules", "attributes": {"key": "api-created-schedule", "at": "30 7 * * 1-5", "timezone": "UTC", "kind": "standard", "description": "Created through the API", "steps": [{"procedure": "morning-review", "nodes": "root"}], "enabled": true, "max_concurrent_runs": 2}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          body: {"data": {"type": "schedules", "attributes": {"key": "api-created-schedule", "at": "30 7 * * 1-5", "timezone": "UTC", "kind": "standard", "description": "Created through the API", "steps": [{"procedure": "morning-review", "nodes": "root"}], "enabled": true, "max_concurrent_runs": 2}}}
+        - id: invalid_input
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "bad-schedule", "at": "whenever", "timezone": "UTC", "kind": "standard"}}}
+        - id: wrong_type
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "typed", "at": "09:00", "timezone": "UTC", "kind": "standard", "steps": "x"}}}
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: "{\"data\": "
+      responses:
+        "201":
+          description: Schedule created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or account records are created from the account root only
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /schedules/{id}:
     get:
       summary: Get a schedule
@@ -10115,6 +12077,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-run-targets:
@@ -10142,8 +12105,8 @@ paths:
           auth: runTokenUngranted
           params:
             id: "~fixture:schedules:acme_schedule"
-        - id: outside_node
-          status: 403
+        - id: initiative_node_reads_account_wide
+          status: 200
           auth: runTokenInitiativeNode
           params:
             id: "~fixture:schedules:acme_schedule"
@@ -10192,6 +12155,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -10278,6 +12242,924 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ScheduleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Archive a schedule (its record, runs and history are kept)
+      operationId: archiveSchedule
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      x-run-targets:
+        - model: Schedule
+          in: path
+          key: id
+      x-scenarios:
+        - id: archived
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:schedules:acme_schedule"
+        - id: run_token
+          status: 204
+          auth: runToken
+          params:
+            id: "~fixture:schedules:acme_schedule"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:schedules:acme_schedule"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:schedules:acme_schedule"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:schedules:acme_schedule"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:schedules:acme_schedule"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:schedules:acme_schedule"
+          raw_body: "{\"data\": "
+      responses:
+        "204":
+          description: Schedule archived
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /schedules/{schedule_id}/runs:
+    post:
+      summary: Start a run of a schedule now (also while it is paused)
+      operationId: triggerScheduleRun
+      security:
+        - apiToken: []
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      x-run-targets:
+        - model: Schedule
+          in: path
+          key: schedule_id
+      x-scenarios:
+        - id: triggered
+          status: 201
+          auth: apiToken
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: run_token
+          status: 201
+          auth: runToken
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            schedule_id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: archived
+          status: 422
+          auth: apiToken
+          prepare: archivedSchedule
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            schedule_id: "~fixture:schedules:acme_schedule"
+          raw_body: "{\"data\": "
+      responses:
+        "201":
+          description: The started schedule run
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ScheduleRunDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The schedule is archived, or invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /schedule_runs:
+    get:
+      summary: List schedule runs
+      operationId: listScheduleRuns
+      security:
+        - apiToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
+            Typed filter query. Example: `schedule:morning-review state:failed since:2026-10-01 sort:occurrence-desc`.
+            Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: schedule
+              type: reference
+              description: "The record id (as in API resources) or its key; `-schedule:` negates."
+            - key: state
+              type: enum
+              values: ["pending","running","completed","failed"]
+              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on occurrence_at, with >=, >, <=, < or a range `from..to`."
+            - key: until
+              type: date
+              description: "A date (YYYY-MM-DD) on occurrence_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["occurrence-asc","occurrence-desc","started-asc","started-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+          schema:
+            type: string
+        - name: "page[number]"
+          in: query
+          required: false
+          description: Page number, starting at 1 (default 1).
+          schema:
+            type: integer
+            minimum: 1
+        - name: "page[size]"
+          in: query
+          required: false
+          description: Page size (default 25, at most 100).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: filtered
+          status: 200
+          auth: apiToken
+          query: {"q": "state:running"}
+        - id: second_page
+          status: 200
+          auth: apiToken
+          query: {"page": {"number": "2", "size": "1"}}
+        - id: run_token
+          status: 200
+          auth: runToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+        - id: invalid_qualifier
+          status: 422
+          auth: apiToken
+          query: {"q": "badqualifier:x"}
+        - id: invalid_page
+          status: 422
+          auth: apiToken
+          query: {"page": {"size": "0"}}
+      responses:
+        "200":
+          description: Schedule runs collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ScheduleRunsDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /schedule_runs/{id}:
+    get:
+      summary: Get a schedule run with its executions
+      operationId: getScheduleRun
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Schedule run id.
+          schema:
+            type: string
+      x-run-targets:
+        - model: ScheduleRun
+          in: path
+          key: id
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: run_token
+          status: 200
+          auth: runToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: initiative_node_reads_account_wide
+          status: 200
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+      responses:
+        "200":
+          description: Schedule run resource
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ScheduleRunDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Cancel a pending or running schedule run (the run and its executions are kept, marked failed with result Cancelled)
+      operationId: cancelScheduleRun
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Schedule run id.
+          schema:
+            type: string
+      x-run-targets:
+        - model: ScheduleRun
+          in: path
+          key: id
+      x-scenarios:
+        - id: cancelled
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: run_token
+          status: 204
+          auth: runToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: already_finished
+          status: 422
+          auth: apiToken
+          prepare: completedScheduleRun
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:schedule_runs:acme_running"
+          raw_body: "{\"data\": "
+      responses:
+        "204":
+          description: Schedule run cancelled
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The run is no longer pending or running
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /routing_rules:
+    get:
+      summary: List routing rules
+      operationId: listRoutingRules
+      security:
+        - apiToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            `key:<key>[,<key>...]` matches the record key exactly; several keys match any of them, e.g. `key:dispatch-quality`.
+            Typed filter query. Example: `enabled:true scope:dispatch agent_role:agent-one sort:priority-desc`. Archived rules are not listed.
+            Unknown qualifiers or values return 422.
+          x-qualifiers:
+            - key: enabled
+              type: boolean
+              values: ["true","false"]
+              description: "A flag filter; `-enabled:<value>` negates it."
+            - key: scope
+              type: text
+              description: "Case-insensitive substring of scope; several values separated by commas match any of them."
+            - key: agent_role
+              type: reference
+              description: "The record id (as in API resources) or its key; `-agent_role:` negates."
+            - key: since
+              type: date
+              description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
+            - key: sort
+              type: sort
+              values: ["priority-asc","priority-desc","key-asc","key-desc"]
+              description: "The sort order, `<field>-asc` or `<field>-desc` (ascending when no direction is given)."
+            - key: key
+              type: enum
+              description: "Exact key match; several keys separated by commas match any of them."
+          schema:
+            type: string
+        - name: "page[number]"
+          in: query
+          required: false
+          description: Page number, starting at 1 (default 1).
+          schema:
+            type: integer
+            minimum: 1
+        - name: "page[size]"
+          in: query
+          required: false
+          description: Page size (default 25, at most 100).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      x-scenarios:
+        - id: authorized_success
+          status: 200
+          auth: apiToken
+        - id: filtered
+          status: 200
+          auth: apiToken
+          query: {"q": "enabled:true sort:priority-desc"}
+        - id: second_page
+          status: 200
+          auth: apiToken
+          query: {"page": {"number": "2", "size": "1"}}
+        - id: run_token
+          status: 200
+          auth: runToken
+        - id: unauthorized
+          status: 401
+          auth: none
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+        - id: invalid_qualifier
+          status: 422
+          auth: apiToken
+          query: {"q": "badqualifier:x"}
+        - id: invalid_page
+          status: 422
+          auth: apiToken
+          query: {"page": {"size": "0"}}
+      responses:
+        "200":
+          description: Routing rules collection
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RoutingRulesDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Create a routing rule
+      operationId: createRoutingRule
+      x-model: RoutingRule
+      security:
+        - apiToken: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RoutingRuleCreateDocument"
+      x-scenarios:
+        - id: created
+          status: 201
+          auth: apiToken
+          body: {"data": {"type": "routing-rules", "attributes": {"key": "api-created-rule", "priority": 7, "scope": "dispatch", "matches": {"kind": ["report"]}, "enabled": true, "agent_role_id": "~fixture:agent_roles:agent_one"}}}
+        - id: run_token
+          status: 201
+          auth: runToken
+          body: {"data": {"type": "routing-rules", "attributes": {"key": "api-created-rule", "priority": 7, "scope": "dispatch", "matches": {"kind": ["report"]}, "enabled": true, "agent_role_id": "~fixture:agent_roles:agent_one"}}}
+        - id: unauthorized
+          status: 401
+          auth: none
+          body: {"data": {"type": "routing-rules", "attributes": {"key": "api-created-rule", "priority": 7, "scope": "dispatch", "matches": {"kind": ["report"]}, "enabled": true, "agent_role_id": "~fixture:agent_roles:agent_one"}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          body: {"data": {"type": "routing-rules", "attributes": {"key": "api-created-rule", "priority": 7, "scope": "dispatch", "matches": {"kind": ["report"]}, "enabled": true, "agent_role_id": "~fixture:agent_roles:agent_one"}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          body: {"data": {"type": "routing-rules", "attributes": {"key": "api-created-rule", "priority": 7, "scope": "dispatch", "matches": {"kind": ["report"]}, "enabled": true, "agent_role_id": "~fixture:agent_roles:agent_one"}}}
+        - id: invalid_input
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "", "scope": "dispatch", "agent_role_id": "~fixture:agent_roles:agent_one"}}}
+        - id: foreign_agent_role
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "foreign-role", "scope": "dispatch", "agent_role_id": "~fixture:agent_roles:agent_other_corp"}}}
+        - id: wrong_type
+          status: 422
+          auth: apiToken
+          body: {"data": {"attributes": {"key": "typed", "scope": "dispatch", "agent_role_id": "~fixture:agent_roles:agent_one", "matches": "x"}}}
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          raw_body: "{\"data\": "
+      responses:
+        "201":
+          description: Routing rule created
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RoutingRuleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or account records are created from the account root only
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /routing_rules/{id}:
+    get:
+      summary: Get a routing rule
+      operationId: getRoutingRule
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      x-run-targets:
+        - model: RoutingRule
+          in: path
+          key: id
+      x-scenarios:
+        - id: found
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: run_token
+          status: 200
+          auth: runToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: initiative_node_reads_account_wide
+          status: 200
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+      responses:
+        "200":
+          description: Routing rule resource
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RoutingRuleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Update a routing rule (its key cannot change)
+      operationId: updateRoutingRule
+      x-model: RoutingRule
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RoutingRuleWriteDocument"
+      x-run-targets:
+        - model: RoutingRule
+          in: path
+          key: id
+      x-scenarios:
+        - id: updated
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: run_token
+          status: 200
+          auth: runToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: archived
+          status: 422
+          auth: apiToken
+          prepare: archivedRoutingRule
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"type": "routing-rules", "attributes": {"priority": 20, "enabled": false, "matches": {"kind": ["decision"]}}}}
+        - id: invalid_input
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"attributes": {"scope": ""}}}
+        - id: foreign_agent_role
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"attributes": {"agent_role_id": "~fixture:agent_roles:agent_other_corp"}}}
+        - id: wrong_type
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          body: {"data": {"attributes": {"enabled": "yes"}}}
+      responses:
+        "200":
+          description: Routing rule updated
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RoutingRuleDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Archive a routing rule (its record and history are kept)
+      operationId: archiveRoutingRule
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      x-run-targets:
+        - model: RoutingRule
+          in: path
+          key: id
+      x-scenarios:
+        - id: archived
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: run_token
+          status: 204
+          auth: runToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: unauthorized
+          status: 401
+          auth: none
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:routing_rules:acme_routing_rule"
+          raw_body: "{\"data\": "
+      responses:
+        "204":
+          description: Routing rule archived
         "401":
           description: Unauthorized
           content:
@@ -10855,6 +13737,10 @@ paths:
           required: true
           schema:
             type: string
+      x-run-targets:
+        - model: Execution
+          in: path
+          key: id
       x-scenarios:
         - id: found
           status: 200
@@ -10878,11 +13764,11 @@ paths:
             id: "~fixture:executions:run_one"
       responses:
         "200":
-          description: Execution resource with actions in meta
+          description: Execution resource, as in the list, with actions in meta
           content:
             application/vnd.api+json:
               schema:
-                $ref: "#/components/schemas/ExecutionDocument"
+                $ref: "#/components/schemas/ExecutionShowDocument"
         "401":
           description: Unauthorized
           content:
@@ -10891,6 +13777,100 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    delete:
+      summary: Cancel a queued, sent or running execution (the record is kept, marked failed with failure_reason "Cancelled via API")
+      operationId: cancelExecution
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: Execution
+          in: path
+          key: id
+      x-scenarios:
+        - id: cancelled
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:executions:run_one"
+        - id: queued
+          status: 204
+          auth: apiToken
+          params:
+            id: "~fixture:executions:run_queued"
+        - id: run_token
+          status: 204
+          auth: runToken
+          params:
+            id: "~fixture:executions:run_one"
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            id: "~fixture:executions:run_one"
+        - id: not_granted
+          status: 403
+          auth: runTokenUngranted
+          params:
+            id: "~fixture:executions:run_one"
+        - id: outside_node
+          status: 403
+          auth: runTokenInitiativeNode
+          params:
+            id: "~fixture:executions:run_api_ungranted"
+        - id: not_found
+          status: 404
+          auth: apiToken
+          params:
+            id: "0"
+        - id: other_account
+          status: 404
+          auth: otherCorpToken
+          params:
+            id: "~fixture:executions:run_one"
+        - id: already_finished
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:executions:run_two"
+        - id: malformed_json
+          status: 422
+          auth: apiToken
+          params:
+            id: "~fixture:executions:run_one"
+          raw_body: "{\"data\": "
+      responses:
+        "204":
+          description: Execution cancelled
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the record is outside the run's node
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The execution has already finished
           content:
             application/vnd.api+json:
               schema:
@@ -10943,6 +13923,12 @@ paths:
           auth: apiToken
           params:
             run_id: "~fixture:executions:run_initiative_paused_queued"
+        - id: dependencies_open
+          status: 409
+          auth: apiToken
+          prepare: openDependency
+          params:
+            run_id: "~fixture:executions:run_for_execution_queued"
         - id: credential_not_usable
           status: 422
           auth: apiToken
@@ -10973,8 +13959,9 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "409":
           description: >-
-            Dispatch blocked: an active pause or stop control, or a paused initiative (automatic dispatch paused).
-            The reason is in `errors[0].title`.
+            Dispatch blocked: an active pause or stop control, a paused initiative (automatic dispatch paused), or
+            work items the item depends on (`depends_on_ids`) that are not yet done or closed. The reason is in
+            `errors[0].title`; for dependencies it lists the items waited on.
           content:
             application/vnd.api+json:
               schema:
@@ -10992,7 +13979,7 @@ paths:
       summary: Refresh the run token of a run
       operationId: refreshRunToken
       description: >-
-        Revokes the run's current token and issues a new one with a fresh lifetime, returned as `api_token`
+        Revokes the run's current token and issues a new one with a fresh lifetime (the role's `run_timeout` plus a fixed margin), returned as `api_token`
         (`token`, `expires_at`). Authenticated by the run's own token while it is still valid, or by an account
         token. An expired token is a 401 ("run token expired"); fetch the payload again to obtain a new token.
         A terminal run gets no token (409). A run token of another run is a 403. Needs no capability grant.
@@ -11126,99 +14113,6 @@ paths:
                 status: failed
                 item_outcome:
                   note: "execution_fetch_failed: invalid_response: Missing required field: manual"
-        - id: answer_with_dispatch_action
-          status: 200
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_answer"
-              attributes:
-                status: finished
-                answer: "Done."
-                requested_actions:
-                  - type: dispatch
-                    work_item_id: "~fixture:work_items:report_one"
-        - id: answer_with_steer_action
-          status: 200
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_answer"
-              attributes:
-                status: finished
-                answer: "Done."
-                requested_actions:
-                  - type: steer
-                    initiative_id: "~fixture:initiatives:alpha_initiative"
-                    instruction: "Hold new work until Friday."
-        - id: schedule_update_inbox_item
-          status: 200
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_schedule"
-              attributes:
-                status: finished
-                answer: "Reviewed."
-                requested_actions:
-                  - type: update_inbox_item
-                    inbox_item_id: "~fixture:inbox_items:setup_item_one"
-                    reason: "A worker address must be set before runs can be dispatched."
-                    evidence: "Account settings show no worker address (https://example.com/settings/account_details)."
-        - id: schedule_resolve_inbox_item
-          status: 200
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_schedule"
-              attributes:
-                status: finished
-                requested_actions:
-                  - type: resolve_inbox_item
-                    inbox_item_id: "~fixture:inbox_items:setup_item_one"
-                    evidence: "Worker address is now set (https://example.com/settings/account_details)."
-        - id: schedule_requested_action_rejected
-          status: 200
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_schedule"
-              attributes:
-                status: finished
-                requested_actions:
-                  - type: resolve_inbox_item
-                    inbox_item_id: "0"
-                    evidence: "Not an item."
-        - id: answer_action_unknown_work_item
-          status: 422
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_answer"
-              attributes:
-                status: finished
-                answer: "Done."
-                requested_actions:
-                  - type: dispatch
-                    work_item_id: "0"
-        - id: answer_action_invalid_type
-          status: 422
-          auth: webhookToken
-          body:
-            data:
-              type: run-results
-              id: "~fixture:executions:run_answer"
-              attributes:
-                status: finished
-                answer: "Done."
-                requested_actions:
-                  - type: delete
         - id: unauthorized
           status: 401
           auth: none
@@ -11773,6 +14667,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-scenarios:
@@ -11825,6 +14720,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -11938,6 +14834,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -12022,6 +14919,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-scenarios:
@@ -12191,6 +15089,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-scenarios:
@@ -12243,6 +15142,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -12323,6 +15223,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       requestBody:
@@ -12402,6 +15303,7 @@ paths:
         - name: id
           in: path
           required: true
+          description: Record id or key.
           schema:
             type: string
       x-scenarios:
@@ -12457,6 +15359,18 @@ paths:
         - name: after_id
           in: query
           required: false
+          schema:
+            type: integer
+        - name: conversation_id
+          in: query
+          required: false
+          description: Only messages of this conversation.
+          schema:
+            type: integer
+        - name: execution_id
+          in: query
+          required: false
+          description: Only messages delivered into this run (follow-up messages sent while an answer run is active).
           schema:
             type: integer
       x-scenarios:
@@ -12875,6 +15789,18 @@ paths:
           params:
             id: "action-ext-cost-test"
           body: {}
+        - id: closed_without_cost
+          status: 200
+          auth: webhookToken
+          params:
+            id: "action-ext-cost-test"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                closed: true
+                cost_actual: null
+                reason: "Task rejected before any compute ran"
         - id: validation_error
           status: 422
           auth: webhookToken
@@ -12887,6 +15813,16 @@ paths:
                 cost_actual:
                   amount_minor: 1.5
                   currency: USD
+        - id: missing_cost_without_closed
+          status: 422
+          auth: webhookToken
+          params:
+            id: "action-ext-cost-test"
+          body:
+            data:
+              type: action-cost
+              attributes:
+                cost_actual: null
       responses:
         "200":
           description: Late cost recorded
@@ -13022,7 +15958,7 @@ paths:
           x-qualifiers:
             - key: context_type
               type: enum
-              values: ["Product","Initiative","Refinement","WorkItem","InboxItem"]
+              values: ["Account","Product","Initiative","Refinement","WorkItem","InboxItem"]
               description: "One of the listed values; several values separated by commas match any of them, `-context_type:` negates."
             - key: since
               type: date
