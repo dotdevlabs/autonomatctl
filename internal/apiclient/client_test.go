@@ -37,24 +37,15 @@ func newClient(t *testing.T, base string, mod func(*Options)) *Client {
 	return c
 }
 
-func TestResolveBaseURL(t *testing.T) {
-	t.Setenv(BaseURLEnv, "")
-	if got, err := ResolveBaseURL("https://a.example"); err != nil || got != "https://a.example" {
-		t.Errorf("configured: %q %v", got, err)
+func TestValidateBaseURL(t *testing.T) {
+	if got, err := ValidateBaseURL("https://a.example"); err != nil || got != "https://a.example" {
+		t.Errorf("valid: %q %v", got, err)
 	}
-	if _, err := ResolveBaseURL(""); codeOf(err) != clierror.CodeUsage {
+	if _, err := ValidateBaseURL(""); codeOf(err) != clierror.CodeUsage {
 		t.Errorf("empty: %v", err)
 	}
-	t.Setenv(BaseURLEnv, "http://override.example:3000")
-	if got, err := ResolveBaseURL("https://a.example"); err != nil || got != "http://override.example:3000" {
-		t.Errorf("override: %q %v", got, err)
-	}
-	if got, err := ResolveBaseURL(""); err != nil || got != "http://override.example:3000" {
-		t.Errorf("override without context: %q %v", got, err)
-	}
 	for _, bad := range []string{"ftp://x", "/relative", "http://", "::bad"} {
-		t.Setenv(BaseURLEnv, bad)
-		if _, err := ResolveBaseURL("https://a.example"); codeOf(err) != clierror.CodeUsage {
+		if _, err := ValidateBaseURL(bad); codeOf(err) != clierror.CodeUsage {
 			t.Errorf("%q accepted: %v", bad, err)
 		}
 	}

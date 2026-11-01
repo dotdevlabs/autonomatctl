@@ -11,16 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dotdevlabs/ctlkit/pkg/clierror"
 )
-
-// BaseURLEnv overrides the base URL of the active context.
-const BaseURLEnv = "AUTONOMATCTL_BASE_URL"
 
 const (
 	// MediaType is the JSON:API media type sent as Accept and Content-Type.
@@ -71,16 +67,12 @@ type Response struct {
 	Body   []byte
 }
 
-// ResolveBaseURL applies the AUTONOMATCTL_BASE_URL override to the base URL of
-// the active context and validates the result.
-func ResolveBaseURL(configured string) (string, error) {
-	base := configured
-	if env := os.Getenv(BaseURLEnv); env != "" {
-		base = env
-	}
+// ValidateBaseURL checks the base URL already resolved by ctlkit (context,
+// AUTONOMATCTL_BASE_URL override or built-in default).
+func ValidateBaseURL(base string) (string, error) {
 	if base == "" {
 		return "", clierror.New(clierror.CodeUsage, "no base URL configured",
-			"set one with 'auth login --name <ctx> --url <url>' or "+BaseURLEnv)
+			"set one with 'auth login --name <ctx> --url <url>'")
 	}
 	if _, err := parseBase(base); err != nil {
 		return "", err

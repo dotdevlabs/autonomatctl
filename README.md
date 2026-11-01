@@ -81,7 +81,7 @@ Named contexts (base URL and token) live in `~/.config/atmt/autonomatctl.yaml`; 
 |----------|--------|
 | `AUTONOMATCTL_TOKEN` | token, overrides the context's. Agent runs pass their run-scoped token here |
 | `AUTONOMATCTL_CONTEXT` | context to use when `--context` is absent |
-| `AUTONOMATCTL_BASE_URL` | base URL, overrides the context's. With `AUTONOMATCTL_TOKEN` also set, no context is needed |
+| `AUTONOMATCTL_BASE_URL` | server address override. Without it (and without a context URL) the default `https://autonomat.com` is used, so a token alone is enough |
 
 ## The contract
 

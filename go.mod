@@ -3,7 +3,7 @@ module github.com/dotdevlabs/autonomatctl
 go 1.24.5
 
 require (
-	github.com/dotdevlabs/ctlkit v0.0.0-20261030211511-9ad8acb4286e
+	github.com/dotdevlabs/ctlkit v0.0.0-20261101095512-dfd03780e3ae
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	gopkg.in/yaml.v3 v3.0.1

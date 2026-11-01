@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dotdevlabs/ctlkit/pkg/airef"
+	"github.com/dotdevlabs/ctlkit/pkg/root/roottest"
+	"github.com/dotdevlabs/ctlkit/pkg/version"
 
 	"github.com/dotdevlabs/autonomatctl/internal/gen"
 	"github.com/dotdevlabs/autonomatctl/internal/schema"
@@ -143,34 +145,38 @@ func TestContextsAndEnvironment(t *testing.T) {
 	t.Setenv("AUTONOMATCTL_TOKEN", "run-scoped")
 	check("AUTONOMATCTL_TOKEN", b, "Bearer run-scoped", "status", "get")
 
-	t.Setenv("AUTONOMATCTL_BASE_URL", a.URL)
-	check("AUTONOMATCTL_BASE_URL", a, "Bearer run-scoped", "status", "get")
-
-	t.Setenv("AUTONOMATCTL_BASE_URL", "ftp://nope")
-	if _, errOut, code := cli(t, "status", "get"); code != 8 || !strings.Contains(errOut, "invalid base URL") {
-		t.Errorf("invalid base URL: %d %q", code, errOut)
-	}
-
 	if _, errOut, code := cli(t, "status", "get", "--context", "missing"); code != 1 || !strings.Contains(errOut, "not found") {
 		t.Errorf("unknown context: %d %q", code, errOut)
 	}
 }
 
-func TestEnvironmentOnlyAgentRun(t *testing.T) {
-	sandbox(t) // no contexts at all
-	srv := newServer(t)
+func TestRootBuildsWithDefault(t *testing.T) {
+	roottest.AssertBuilds(t, rootConfig(version.Current(product), nil))
+	if defaultBaseURL != "https://autonomat.com" {
+		t.Errorf("defaultBaseURL = %q", defaultBaseURL)
+	}
+}
 
-	if _, errOut, code := cli(t, "status", "get"); code != 8 || !strings.Contains(errOut, "no context selected") {
-		t.Errorf("without anything: %d %q", code, errOut)
+func TestTokenOnlyTargetsDefault(t *testing.T) {
+	sandbox(t) // no context file
+	t.Setenv("AUTONOMATCTL_TOKEN", "run-token")
+	out, errOut, code := cli(t, "status", "get", "--dry-run", "--json")
+	if code != 0 {
+		t.Fatalf("token only: %d %q %q", code, out, errOut)
 	}
+	if !strings.Contains(out, `"url": "https://autonomat.com/`) || strings.Contains(out, "run-token") {
+		t.Errorf("dry-run = %q", out)
+	}
+}
+
+func TestBaseURLOverride(t *testing.T) {
+	sandbox(t)
+	srv := newServer(t)
 	t.Setenv("AUTONOMATCTL_BASE_URL", srv.URL)
-	if _, _, code := cli(t, "status", "get"); code != 8 {
-		t.Errorf("base URL alone must not be enough: %d", code)
-	}
 	t.Setenv("AUTONOMATCTL_TOKEN", "run-token")
 	out, errOut, code := cli(t, "status", "get", "--json", "--verbose")
 	if code != 0 || !strings.Contains(out, `"ok":true`) {
-		t.Fatalf("env-only run: %d %q %q", code, out, errOut)
+		t.Fatalf("override run: %d %q %q", code, out, errOut)
 	}
 	if r := srv.last(t); r.Auth != "Bearer run-token" {
 		t.Errorf("auth = %q", r.Auth)
@@ -178,14 +184,13 @@ func TestEnvironmentOnlyAgentRun(t *testing.T) {
 	if !strings.Contains(errOut, "GET "+srv.URL+"/status -> 200") || strings.Contains(errOut, "run-token") {
 		t.Errorf("verbose = %q", errOut)
 	}
-	// global flags still reach the command
-	out, _, code = cli(t, "status", "get", "--dry-run", "--json")
-	if code != 0 || !strings.Contains(out, `"method": "GET"`) || srv.count() != 1 {
-		t.Errorf("dry-run: %d %q (requests %d)", code, out, srv.count())
-	}
-	// an explicit unknown --context is still an error, not a silent env fallback
+	// an explicit unknown --context is still an error
 	if _, _, code := cli(t, "status", "get", "--context", "nope"); code != 1 {
 		t.Errorf("--context nope: %d", code)
+	}
+	t.Setenv("AUTONOMATCTL_BASE_URL", "ftp://nope")
+	if _, errOut, code := cli(t, "status", "get"); code != 8 || !strings.Contains(errOut, "invalid base URL") {
+		t.Errorf("invalid override: %d %q", code, errOut)
 	}
 }
 

@@ -621,9 +621,9 @@ func (b *builder) run(c *cobra.Command, op spec.Operation, idIn *input, inputs [
 	ac := ctxutil.ActiveContextFrom(ctx)
 	if ac == nil {
 		return clierror.New(clierror.CodeUsage, "no active context",
-			"use 'auth login --name <ctx>' or set AUTONOMATCTL_BASE_URL and AUTONOMATCTL_TOKEN")
+			"use 'auth login --name <ctx>' or set AUTONOMATCTL_TOKEN")
 	}
-	base, err := apiclient.ResolveBaseURL(ac.BaseURL)
+	base, err := apiclient.ValidateBaseURL(ac.BaseURL)
 	if err != nil {
 		return err
 	}
