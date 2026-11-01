@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "3.0.0"
+  version: "4.0.0"
 components:
   securitySchemes:
     apiToken:
@@ -1642,9 +1642,10 @@ components:
                     type: string
                   url:
                     type: string
-                  allowed:
-                    type: array
-                    items:
+                  operations:
+                    type: object
+                    description: "cli: subcommand to the operationId of the API operation it calls (only commands that call this API)."
+                    additionalProperties:
                       type: string
                   allowed_hosts:
                     type: array
@@ -1658,9 +1659,20 @@ components:
                     type: integer
                   env:
                     type: object
-                    description: "cli credential mapping: environment variable name to the connection field (`credential` or `secret`) whose value is in `credentials.env`. Names only, never values."
+                    description: "cli credential mapping: environment variable name to the connection field (`credential` or `secret`) whose value is in `credentials.env`, or an object `{from, as: file}` whose value is delivered as a file in `credentials.files`. Names only, never values."
                     additionalProperties:
-                      type: string
+                      oneOf:
+                        - type: string
+                        - type: object
+                          additionalProperties: false
+                          required: [from, as]
+                          properties:
+                            from:
+                              type: string
+                              enum: [credential, secret]
+                            as:
+                              type: string
+                              enum: [file]
                   auth:
                     type: string
                     description: "http credential mapping: `none`, `bearer`, `basic` or `header:<Name>`. The resolved headers are in `credentials.headers`."
@@ -1671,7 +1683,7 @@ components:
               credentials:
                 type: object
                 additionalProperties: false
-                description: "Write-only run payload data: the capability's connection credentials resolved through its `invocation` mapping (`env` for cli, `headers` for http). Present only for a granted capability with a mapping and an active connection holding the mapped values; a capability that cannot be resolved is left out with a run warning. Carried by this document only, never returned by any other endpoint, log, event or stored snapshot."
+                description: "Write-only run payload data: the capability's connection credentials resolved through its `invocation` mapping (`env` and `files` for cli, `headers` for http). Present only for a granted capability with a mapping and an active connection holding the mapped values; a capability that cannot be resolved is left out with a run warning. Carried by this document only, never returned by any other endpoint, log, event or stored snapshot."
                 properties:
                   env:
                     type: object
@@ -1683,6 +1695,21 @@ components:
                     description: HTTP header name to value (http).
                     additionalProperties:
                       type: string
+                  files:
+                    type: array
+                    description: "File credentials (cli). The worker writes `content` to a file and sets the environment variable `name` to its path."
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [name, content, as]
+                      properties:
+                        name:
+                          type: string
+                        content:
+                          type: string
+                        as:
+                          type: string
+                          enum: [file]
               input_schema:
                 type: object
                 additionalProperties: false
@@ -3445,9 +3472,10 @@ components:
               type: string
             url:
               type: string
-            allowed:
-              type: array
-              items:
+            operations:
+              type: object
+              description: "cli: map of subcommand (an entry of allowed_commands) to the operationId of the API operation it calls; only commands that call this API are listed. A run token is granted exactly the operation ids that are values of this map. Replaces the removed `allowed` list."
+              additionalProperties:
                 type: string
             allowed_hosts:
               type: array
@@ -3461,9 +3489,20 @@ components:
               type: integer
             env:
               type: object
-              description: "cli credential mapping: environment variable name to `credential` or `secret` (a field of the capability's connection). Names only; a mapping requires `connection_id`."
+              description: "cli credential mapping: environment variable name to `credential` or `secret` (a field of the capability's connection), or to an object `{from, as}` with `as: file` to deliver the value as a file named by the variable. Names only; a mapping requires `connection_id`."
               additionalProperties:
-                type: string
+                oneOf:
+                  - type: string
+                  - type: object
+                    additionalProperties: false
+                    required: [from, as]
+                    properties:
+                      from:
+                        type: string
+                        enum: [credential, secret]
+                      as:
+                        type: string
+                        enum: [file]
             auth:
               type: string
               description: "http credential mapping: `none`, `bearer` (credential), `basic` (credential as user:password) or `header:<Name>`."

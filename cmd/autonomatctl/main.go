@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,17 +13,19 @@ import (
 	"github.com/dotdevlabs/ctlkit/pkg/airef"
 	"github.com/dotdevlabs/ctlkit/pkg/clierror"
 	"github.com/dotdevlabs/ctlkit/pkg/config"
-	"github.com/dotdevlabs/ctlkit/pkg/ctxutil"
 	"github.com/dotdevlabs/ctlkit/pkg/root"
 	"github.com/dotdevlabs/ctlkit/pkg/version"
 
-	"github.com/dotdevlabs/autonomatctl/internal/apiclient"
 	"github.com/dotdevlabs/autonomatctl/internal/gen"
 	"github.com/dotdevlabs/autonomatctl/internal/schema"
 	"github.com/dotdevlabs/autonomatctl/internal/spec"
 )
 
 const product = "autonomatctl"
+
+// defaultBaseURL is the server address used when neither a context nor
+// AUTONOMATCTL_BASE_URL names one.
+const defaultBaseURL = "https://autonomat.com"
 
 // builtins are the top-level names owned by ctlkit and this package.
 var builtins = []string{"auth", "context", "version", "ai", "schema", "help", "completion"}
@@ -70,19 +71,25 @@ func newRoot() (*cobra.Command, error) {
 	return buildRoot(sp)
 }
 
+// rootConfig is the ctlkit root configuration, shared with the build check.
+func rootConfig(ver version.Info, cmds []*cobra.Command) root.BuildConfig {
+	return root.BuildConfig{
+		Product:        product,
+		Short:          "CLI for Autonomat, generated from its OpenAPI contract",
+		Version:        ver,
+		DefaultBaseURL: defaultBaseURL,
+		Commands:       cmds,
+		Workflows:      workflows(),
+	}
+}
+
 func buildRoot(sp *spec.Spec) (*cobra.Command, error) {
 	ver := version.Current(product)
 	cmds, err := gen.Build(sp, gen.Config{Reserved: builtins, Version: ver.Version})
 	if err != nil {
 		return nil, fmt.Errorf("cannot generate commands from the contract: %w", err)
 	}
-	cmd := root.New(root.BuildConfig{
-		Product:   product,
-		Short:     "CLI for Autonomat, generated from its OpenAPI contract",
-		Version:   ver,
-		Commands:  append(cmds, schema.NewCmd()),
-		Workflows: workflows(),
-	})
+	cmd := root.New(rootConfig(ver, append(cmds, schema.NewCmd())))
 	if f := cmd.PersistentFlags().Lookup("json"); f != nil {
 		f.Usage = "Print the raw JSON:API response document (errors body on failure)"
 	}
@@ -97,19 +104,7 @@ func buildRoot(sp *spec.Spec) (*cobra.Command, error) {
 		if offline(c) {
 			return nil
 		}
-		err := prev(c, args)
-		if err == nil {
-			return nil
-		}
-		// An agent run needs no stored context: base URL and token from the
-		// environment are enough.
-		ce, ok := err.(*clierror.CLIError)
-		base, tok := os.Getenv(apiclient.BaseURLEnv), os.Getenv("AUTONOMATCTL_TOKEN")
-		if !ok || ce.Code != clierror.CodeUsage || base == "" || tok == "" {
-			return err
-		}
-		c.SetContext(envContext(c, base, tok))
-		return nil
+		return prev(c, args)
 	}
 
 	return cmd, nil
@@ -128,18 +123,6 @@ func offline(c *cobra.Command) bool {
 		}
 	}
 	return config.SkipContextResolution(c)
-}
-
-func envContext(c *cobra.Command, base, tok string) (ctx context.Context) {
-	f := c.Flags()
-	gf := ctxutil.GlobalFlags{}
-	gf.Context, _ = f.GetString("context")
-	gf.JSON, _ = f.GetBool("json")
-	gf.Format, _ = f.GetString("format")
-	gf.DryRun, _ = f.GetBool("dry-run")
-	gf.Verbose, _ = f.GetBool("verbose")
-	ctx = ctxutil.WithGlobalFlags(c.Context(), gf)
-	return ctxutil.WithActiveContext(ctx, &config.Context{BaseURL: base, Token: tok})
 }
 
 func workflows() []airef.Workflow {
@@ -178,7 +161,7 @@ func workflows() []airef.Workflow {
 			Name:        "Run as an agent with a run-scoped token",
 			Description: "No stored context is needed when the base URL and token come from the environment.",
 			Steps: []string{
-				`AUTONOMATCTL_BASE_URL=https://autonomat.example AUTONOMATCTL_TOKEN=<run-token> autonomatctl status get --json`,
+				`AUTONOMATCTL_TOKEN=<run-token> autonomatctl status get --json`,
 			},
 		},
 		{
