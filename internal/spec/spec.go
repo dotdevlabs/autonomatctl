@@ -78,6 +78,7 @@ type Qualifier struct {
 
 // Body describes a JSON:API request document.
 type Body struct {
+	RawJSON     bool // Send the documented JSON object directly, without a JSON:API envelope.
 	ContentType string
 	DataType    string // enum value of data.type, empty when undocumented
 	// Linkage marks a relationship request whose data is an array of resource

@@ -184,6 +184,12 @@ func TestConformance(t *testing.T) {
 				t.Errorf("content type = %q, want %q", got.ContentType, op.Body.ContentType)
 			}
 			doc := decode(t, got.Body)
+			if op.Body.RawJSON {
+				if !reflect.DeepEqual(doc, wantAttrs["body"]) {
+					t.Errorf("body = %v, want %v", doc, wantAttrs["body"])
+				}
+				return
+			}
 			if len(doc) != 1 {
 				t.Errorf("body members = %v, want only data", doc)
 			}
@@ -358,5 +364,33 @@ func TestRequiredInputsAreRequiredFlags(t *testing.T) {
 	}
 	if required == 0 {
 		t.Error("the pinned contract has no required body field to check")
+	}
+}
+
+// Plain JSON callback documents must retain their root shape and typed schema.
+func TestPlainJSONRequest(t *testing.T) {
+	sp := pinnedSpec(t)
+	srv := newStub(t)
+	op := find(t, sp, "updateCodexDeviceAuthorization")
+	if !op.Body.RawJSON || len(op.Body.Fields) != 1 || !strings.Contains(string(op.Body.Fields[0].Schema), "oneOf") {
+		t.Fatalf("plain JSON schema missing: %+v", op.Body)
+	}
+	cmd := commandsByOperation(testRoot(t, sp, srv.URL, fastCfg()))[op.ID]
+	args := strings.Fields(strings.TrimPrefix(cmd.CommandPath(), "autonomatctl "))
+	args = append(args, "device1")
+	if _, _, err := run(t, sp, srv.URL, args...); err == nil {
+		t.Fatal("missing body accepted")
+	}
+	if len(srv.requests()) != 0 {
+		t.Fatal("request sent without required body")
+	}
+	args = append(args, "--body", `{"state":"waiting","user_code":"TEST-CODE"}`)
+	if _, stderr, err := run(t, sp, srv.URL, args...); err != nil {
+		t.Fatalf("%v: %s", err, stderr)
+	}
+	req := srv.requests()[0]
+	want := map[string]any{"state": "waiting", "user_code": "TEST-CODE"}
+	if req.ContentType != "application/json" || !reflect.DeepEqual(decode(t, req.Body), want) {
+		t.Errorf("request = %+v", req)
 	}
 }

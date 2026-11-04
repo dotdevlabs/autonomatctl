@@ -35,7 +35,7 @@ func TestLoadPinned(t *testing.T) {
 	if s.Title != "Autonomat API" || s.Version == "" || s.OpenAPI == "" {
 		t.Fatalf("bad header: %+v", s)
 	}
-	if len(s.Operations) != 126 {
+	if len(s.Operations) != 135 {
 		t.Fatalf("operations = %d", len(s.Operations))
 	}
 	ids := map[string]bool{}
@@ -175,7 +175,7 @@ func TestLoadErrors(t *testing.T) {
 		"cyclic ref":      strings.Replace(mini, `Real: {type: string}`, `Real: {$ref: "#/components/schemas/Alias"}`, 1),
 		"missing param":   strings.Replace(mini, `#/components/parameters/Page`, `#/components/parameters/Nope`, 1),
 		"bad properties":  strings.Replace(mini, "properties:\n        b:", "properties: [1]\n      x:\n        b:", 1),
-		"no data member":  strings.Replace(mini, "      properties:\n        data:\n          type: object\n          required: [id]", "      properties:\n        other:\n          type: object\n          required: [id]", 1),
+		"no data member":  strings.Replace(strings.Replace(mini, "application/json:", "application/vnd.api+json:", 1), "      properties:\n        data:\n          type: object\n          required: [id]", "      properties:\n        other:\n          type: object\n          required: [id]", 1),
 		"bad nested prop": strings.Replace(mini, "e: {type: string, enum: [x, y]}", "e: [1]", 1),
 	}
 	for name, doc := range cases {

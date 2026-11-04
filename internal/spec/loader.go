@@ -121,6 +121,15 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 	if err != nil {
 		return nil, err
 	}
+	if ct == "application/json" && doc.Properties.m["data"] == nil {
+		sch, err := l.jsonSchema(doc.raw)
+		if err != nil {
+			return nil, err
+		}
+		b.RawJSON = true
+		b.Fields = []Field{{Name: "body", Type: "object", Required: rb.Required, Schema: sch, Description: "The documented JSON request object"}}
+		return b, nil
+	}
 	dataRef, ok := doc.Properties.m["data"]
 	if !ok {
 		if len(doc.Properties.keys) > 0 {
