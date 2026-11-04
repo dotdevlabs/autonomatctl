@@ -526,7 +526,14 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, q
 	if len(query) > 0 {
 		req.Query = query
 	}
-	if op.Body != nil && op.Body.Linkage {
+	if op.Body != nil && op.Body.RawJSON {
+		body, err := json.Marshal(attrs["body"])
+		if err != nil {
+			return req, err
+		}
+		req.Body = body
+		req.ContentType = op.Body.ContentType
+	} else if op.Body != nil && op.Body.Linkage {
 		ids, _ := attrs[linkageFlag].([]string)
 		list := make([]linkageIdentifier, 0, len(ids))
 		for _, id := range ids {
