@@ -3,7 +3,7 @@
 Commands and flags are generated from the embedded Autonomat contract. Use
 `autonomatctl schema` to inspect its version and source commit, and
 `autonomatctl ai --json` for the current command reference, required flags,
-enums and nested JSON schemas. The synchronized contract is version 9.0.0.
+enums and nested JSON schemas. The synchronized contract is version 11.2.0.
 
 ## Create a product document
 
@@ -39,6 +39,26 @@ for secrets; value requests must not ask for secrets as input.
 Creating an inbox item also requires `--automation_assessment` and `--category`,
 plus the fields required for that category. Inspect `ai --json` for the assessment
 schema and the command's `required_by_category` annotation.
+
+Review and information requests require a `value_request` with `kind: input`
+and `required: true`; use `type: long_text` for content by default. The
+`--content_intent` flag accepts `brief`, `review`, `facts`, `edits` or `reasons`
+and requires content input in any category. When decision choices request
+content, each option needs its own required input. A `place` value request
+does not satisfy a request for content.
+
+## Withdraw an erroneous Inbox request
+
+```sh
+autonomatctl inbox-items withdrawal create INBOX_ITEM_ID --reason 'Erroneous request' --evidence 'Existing implementation is tracked' --json
+```
+
+Both `--reason` and `--evidence` must be nonblank. The run needs an explicit
+operation grant for `withdrawInboxItem`, an enabled role and access to the
+item's node; assessment runs cannot withdraw requests. Withdrawal preserves
+an immutable audit and executes no resolution, saved call or continuation.
+An identical retry by the same actor returns the existing withdrawal;
+different retries and requests that are no longer pending fail validation.
 
 ## Pending calls
 
