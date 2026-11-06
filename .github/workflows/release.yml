@@ -27,6 +27,18 @@ jobs:
         env:
           SPEC_READ_TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
 
+      - name: Check contract release version
+        env:
+          CGO_ENABLED: '0'
+          GOPRIVATE: github.com/dotdevlabs/*
+        run: |
+          set -euo pipefail
+          go build -trimpath -o /tmp/autonomatctl ./cmd/autonomatctl
+          go run ./cmd/check-release "$GITHUB_REF_NAME" /tmp/autonomatctl
+          echo 'RELEASE_NOTICE<<NOTICE_EOF' >> "$GITHUB_ENV"
+          cat docs/release-notice.md >> "$GITHUB_ENV"
+          echo 'NOTICE_EOF' >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
