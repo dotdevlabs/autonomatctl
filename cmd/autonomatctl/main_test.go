@@ -304,7 +304,7 @@ func TestAIReference(t *testing.T) {
 	if err := dec.Decode(&ref); err != nil {
 		t.Fatalf("ai --json is not a ctlkit Reference: %v", err)
 	}
-	if ref.Product != product || len(ref.Commands) == 0 || !reflect.DeepEqual(ref.Workflows, workflows()) {
+	if ref.Product != product || ref.Version != schema.Version() || len(ref.Commands) == 0 || !reflect.DeepEqual(ref.Workflows, workflows()) {
 		t.Errorf("reference = %s %s, %d commands, %d workflows", ref.Product, ref.Version, len(ref.Commands), len(ref.Workflows))
 	}
 
@@ -431,11 +431,26 @@ func TestOfflineCommands(t *testing.T) {
 		t.Errorf("completion: %d", code)
 	}
 	out, _, code = cli(t, "version")
-	if code != 0 || !strings.HasPrefix(out, "autonomatctl version") {
+	if code != 0 || !strings.HasPrefix(out, "autonomatctl version "+schema.Version()+" ") {
 		t.Errorf("version: %d %q", code, out)
 	}
 	if out, _, code := cli(t, "context", "list"); code != 0 {
 		t.Errorf("context list: %d %q", code, out)
+	}
+}
+
+func TestVersionIgnoresLinkerVersion(t *testing.T) {
+	sandbox(t)
+	old := version.Version
+	version.Version = "999.999.999"
+	t.Cleanup(func() { version.Version = old })
+	out, errOut, code := cli(t, "version", "--json")
+	var info version.Info
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || info.Version != schema.Version() {
+		t.Fatalf("version: %d %s %s", code, out, errOut)
 	}
 }
 

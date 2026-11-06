@@ -6,6 +6,20 @@ startup** rather than mapped by hand.
 
 ## Install
 
+The CLI version is the embedded API contract's `info.version`. Moving from
+historical v0.1.0–v0.1.9 installations to a 0.0.x contract release requires a
+reinstall because 0.0.x sorts below 0.1.x:
+
+```sh
+brew update
+brew reinstall dotdevlabs/tap/autonomatctl
+autonomatctl version
+```
+
+For exact manual download, checksum verification, and replacement commands on
+Linux amd64, see [the release migration notice](docs/release-notice.md). Select
+the intended contract tag explicitly rather than the latest-release URL.
+
 Download a release from GitHub Releases (linux, darwin, windows; amd64, arm64; `checksums.txt` included),
 or `brew install dotdevlabs/tap/autonomatctl`.
 
@@ -119,6 +133,11 @@ repository secret `SPEC_READ_TOKEN` (read access to `dotdevlabs/ctlkit` and `dot
 generated command and compares method, path, query names and body fields with the contract.
 
 ## Release
+
+Tags must match the embedded contract version. Before publishing, the workflow
+builds the CLI and checks that the tag without `v`, the binary's reported version,
+and the embedded contract's `info.version` all agree. Any mismatch stops release
+and reports all three values. Release notes include the reinstall notice above.
 
 Push a tag `vX.Y.Z`; the Release workflow runs goreleaser: static (`CGO_ENABLED=0`) binaries for
 linux/darwin/windows × amd64/arm64, `checksums.txt`, a GitHub Release, and the Homebrew formula

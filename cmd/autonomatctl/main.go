@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -85,11 +86,27 @@ func rootConfig(ver version.Info, cmds []*cobra.Command) root.BuildConfig {
 
 func buildRoot(sp *spec.Spec) (*cobra.Command, error) {
 	ver := version.Current(product)
+	ver.Version = sp.Version
 	cmds, err := gen.Build(sp, gen.Config{Reserved: builtins, Version: ver.Version})
 	if err != nil {
 		return nil, fmt.Errorf("cannot generate commands from the contract: %w", err)
 	}
 	cmd := root.New(rootConfig(ver, append(cmds, schema.NewCmd())))
+	for _, child := range cmd.Commands() {
+		if child.Name() == "version" {
+			child.RunE = func(c *cobra.Command, _ []string) error {
+				asJSON, err := c.Flags().GetBool("json")
+				if err != nil {
+					return err
+				}
+				if asJSON {
+					return json.NewEncoder(c.OutOrStdout()).Encode(ver)
+				}
+				_, err = fmt.Fprintf(c.OutOrStdout(), "%s version %s (commit %s, built %s)\n", ver.Product, ver.Version, ver.Commit, ver.Date)
+				return err
+			}
+		}
+	}
 	if f := cmd.PersistentFlags().Lookup("json"); f != nil {
 		f.Usage = "Print the raw JSON:API response document (errors body on failure)"
 	}

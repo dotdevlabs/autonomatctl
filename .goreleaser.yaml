@@ -22,7 +22,6 @@ builds:
     ldflags:
       - >-
         -s -w
-        -X github.com/dotdevlabs/ctlkit/pkg/version.Version={{.Version}}
         -X github.com/dotdevlabs/ctlkit/pkg/version.Commit={{.Commit}}
         -X github.com/dotdevlabs/ctlkit/pkg/version.Date={{.Date}}
 
@@ -39,6 +38,7 @@ checksum:
   name_template: "checksums.txt"
 
 release:
+  header: '{{ .Env.RELEASE_NOTICE }}'
   github:
     owner: dotdevlabs
     name: autonomatctl
