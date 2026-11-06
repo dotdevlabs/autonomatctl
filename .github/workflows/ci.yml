@@ -10,6 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Select prior main
+        run: |
+          git fetch origin main
+          if [ "${{ github.event_name }}" = push ]; then
+            echo 'RELEASE_BASE_REF=HEAD^1' >> "$GITHUB_ENV"
+          else
+            echo 'RELEASE_BASE_REF=origin/main' >> "$GITHUB_ENV"
+          fi
 
       - uses: actions/setup-go@v5
         with:

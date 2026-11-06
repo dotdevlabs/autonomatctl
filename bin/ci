@@ -21,6 +21,9 @@ if [ -n "$GOFMT_OUT" ]; then
   exit 1
 fi
 
+echo "==> release version check"
+go run ./cmd/releaseversion --base "${RELEASE_BASE_REF:-origin/main}" check
+
 echo "==> spec sync check"
 ./scripts/sync_spec.sh --check
 

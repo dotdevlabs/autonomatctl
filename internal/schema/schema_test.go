@@ -31,8 +31,8 @@ func TestPinnedFiles(t *testing.T) {
 	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(Version()) {
 		t.Errorf("contract version %q is not a semantic version", Version())
 	}
-	if Version() != "9.0.0" {
-		t.Errorf("contract version = %q, want 9.0.0", Version())
+	if Version() != "11.2.0" {
+		t.Errorf("contract version = %q, want 11.2.0", Version())
 	}
 	sp, err := Spec()
 	if err != nil || len(sp.Operations) == 0 {

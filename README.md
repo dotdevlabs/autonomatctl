@@ -120,7 +120,65 @@ generated command and compares method, path, query names and body fields with th
 
 ## Release
 
-Push a tag `vX.Y.Z`; the Release workflow runs goreleaser: static (`CGO_ENABLED=0`) binaries for
+Every main change is a release. Never choose a version or push a tag manually.
+`release-stage.json` records development (0.0.x, no compatibility guarantees),
+alpha (0.y.x) or stable (semantic versioning). For alpha/stable, also set its
+`kind` to `fix`, `addition` or `breaking`. Development always increments patch;
+alpha additions/breaking increment minor; stable breaking increments major.
+Entering alpha starts 0.1.0; entering stable starts 1.0.0. Stages cannot regress.
+
+Before pushing a branch:
+
+```sh
+git fetch origin main
+git merge origin/main
+scripts/set-version
+bin/ci
+```
+
+The script reads origin/main, computes VERSION and appends one version-log.json
+entry with a SHA-256 digest of tracked paths, modes and content. Repeating it
+refreshes the digest without bumping twice. Stage all new files before running
+it; untracked files are excluded. VERSION and the log are excluded from hashing.
+Commit both metadata files. CI checks the same computed release, including the
+entire main log prefix. `go run ./cmd/releaseversion --base REF check` selects an
+explicit prior-main snapshot; main-push CI uses HEAD^1. Commands emit JSON.
+
+After merging, the Release workflow validates and tags the exact commit, then
+runs goreleaser: static (`CGO_ENABLED=0`) binaries for
 linux/darwin/windows × amd64/arm64, `checksums.txt`, a GitHub Release, and the Homebrew formula
 (needs `HOMEBREW_TAP_GITHUB_TOKEN`). Check locally with `goreleaser check` and
 `goreleaser build --snapshot --clean`.
+
+### Reinstall for v0.0.1
+
+Legacy v0.1.0–v0.1.9 sort higher than 0.0.x, so existing installs must reinstall:
+
+```sh
+brew update
+brew reinstall dotdevlabs/tap/autonomatctl
+autonomatctl version
+```
+
+Manual installs (choose linux or darwin and amd64 or arm64):
+
+```sh
+os=linux
+arch=amd64
+curl -fLO "https://github.com/dotdevlabs/autonomatctl/releases/download/v0.0.1/autonomatctl_${os}_${arch}.tar.gz"
+tar -xzf "autonomatctl_${os}_${arch}.tar.gz" autonomatctl
+sudo install -m 755 autonomatctl /usr/local/bin/autonomatctl
+autonomatctl version
+```
+
+Windows PowerShell (use arm64 instead of amd64 when appropriate):
+
+```powershell
+Invoke-WebRequest https://github.com/dotdevlabs/autonomatctl/releases/download/v0.0.1/autonomatctl_windows_amd64.zip -OutFile autonomatctl.zip
+Expand-Archive autonomatctl.zip -DestinationPath release -Force
+Copy-Item release/autonomatctl.exe (Get-Command autonomatctl).Source -Force
+autonomatctl version
+```
+
+Verify the output reports 0.0.1. The same instructions ship in the
+[first release notes](docs/releases/v0.0.1.md).

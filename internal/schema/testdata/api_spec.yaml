@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "9.0.0"
+  version: "11.2.0"
 components:
   securitySchemes:
     apiToken:
@@ -220,9 +220,9 @@ components:
         Account data mapping a run's `item_outcome.state` to a work item status. Exactly the keys
         `completed` (completed with no open external work, default `done`), `completed_open_external_work`
         (completed while the item has external refs, default `in_progress`), `interrupted` (default `ready`),
-        `stopped` (default `ready`) and `failed` (default `ready`); each value is one of the work item statuses. An `item_outcome.state`
-        with no key here is not applied: the delivery is accepted, the status stays and the reason is
-        recorded as the run's `failure_reason`.
+        `stopped` (default `ready`) and `failed` (default `ready`); each value is one of the work item statuses.
+        Unfinished outcomes use only open, ready or in_progress mappings; terminal mappings fall back to ready.
+        Unknown supplied outcome states return 422. Missing completion evidence keeps work open.
     AccountResource:
       type: object
       additionalProperties: false
@@ -1087,6 +1087,13 @@ components:
           description: The external state last read by the work tracker, null until read or when not tracked.
         terminal:
           type: boolean
+        last_checked_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
     ActionCostAttributes:
       type: object
       additionalProperties: false
@@ -1148,10 +1155,11 @@ components:
       properties:
         state:
           type: string
+          enum: [completed, interrupted, stopped, failed]
           description: >-
-            `completed`, `interrupted`, `stopped` or `failed`. The work item status is set from the account's
-            `work_item_status_map` after the delivery's external refs are recorded; an unmapped value
-            leaves the status unchanged and is recorded as the run's `failure_reason`.
+            Only completed proves assigned work success. Other states keep work open with the note as next_action.
+            Missing or null item_outcome, including note-only objects, never proves completion.
+            Supplied invalid objects, unknown states or wrongly typed state/note values return 422 before writes.
         note:
           type: string
           nullable: true
@@ -1219,8 +1227,8 @@ components:
           nullable: true
           description: >-
             The reply to the operator for an answer run (a run that replies to a conversation message
-            rather than doing work). Posted as one assistant message in the conversation. Ignored for
-            runs on work items. Used only when status is finished or completed; when the run failed
+            rather than doing work). Posted as one assistant message in the conversation. Also stored independently
+            as result evidence for work runs, without classifying assigned-work completion. When an answer run failed
             the failure note below is shown instead. Progress reply_text is shown for API-key answers and replaced by the final answer.
         external_refs:
           type: array
@@ -2111,7 +2119,7 @@ components:
                 approval: ["request","reason","title","evidence","continuation","denial_continuation"]
                 access: ["steps","reason","unblocks","evidence","continuation","value_request","title"]
                 information: ["request","context","evidence","continuation","value_request","title","reason"]
-                review: ["request","context","evidence","continuation","title","reason"]
+                review: ["request","context","evidence","continuation","title","reason","value_request"]
                 attestation: ["request","context","evidence","continuation","title","reason"]
                 external_action: ["steps","reason","unblocks","evidence","continuation","value_request","title"]
               description: >
@@ -2119,6 +2127,12 @@ components:
                 item must keep every effective category minimum plus account-configured requirement (`GET /inbox_requirements`);
                 a missing or blank required part is a 422 with one `source.pointer` (`/data/attributes/<part>`) per part, and a value that is not a string (a text part) is a 422 pointing at that attribute. `x-required-by-category` states the default required parts per category.
               properties:
+                content_intent:
+                  type: string
+                  enum: [brief, review, facts, edits, reasons]
+                  description: Declares content that requires a valid required input value_request in any category. Review and information always require content input. Content requested in decision choices requires a required input on every option. Use long_text by default.
+                requested_operation:
+                  $ref: "#/components/schemas/InboxRequestedOperation"
                 automation_assessment:
                   $ref: "#/components/schemas/InboxAutomationAssessmentInput"
                 title:
@@ -2224,26 +2238,28 @@ components:
               type: string
               enum: [pending-calls]
             attributes:
-              type: object
-              additionalProperties: false
-              properties:
-                capability:
-                  type: string
-                  description: The capability key (required).
-                arguments:
-                  type: object
-                  description: The exact arguments of the call, for a cli capability including its `subcommand` (required).
-                  additionalProperties:
-                    $ref: "#/components/schemas/JsonValue"
-                title:
-                  type: string
-                  description: Nonblank one-line action title, required when operation metadata is unavailable. Surrounding whitespace is trimmed; embedded line separators are rejected. A missing title returns a 422 JSON:API error stating that title is required when operation metadata is unavailable. Metadata-derived titles remain authoritative even when a title is supplied.
-                replaces:
-                  type: string
-                  description: Optional pending approval call Inbox item ID in the same account and work item (including an earlier execution), or the same execution with no work item on either item. Creation and system completion of the old item are atomic; its resolution links the replacement. The old call and history are retained and neither call is dispatched. Nonexistent, malformed, resolved, non-call, non-approval or differently owned references return 422. Explicit replacement creates a fresh pending item even for unchanged arguments; ordinary submissions retain deduplication excluding superseded items.
-                reason:
-                  type: string
-                  description: Why the call is needed (required); shown to the operator.
+              $ref: "#/components/schemas/PendingCallCreateAttributes"
+    PendingCallCreateAttributes:
+      type: object
+      additionalProperties: false
+      properties:
+        capability:
+          type: string
+          description: The capability key (required).
+        arguments:
+          type: object
+          description: The exact arguments of the call, for a cli capability including its `subcommand` (required).
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        title:
+          type: string
+          description: Nonblank one-line action title, required when operation metadata is unavailable. Surrounding whitespace is trimmed; embedded line separators are rejected. A missing title returns a 422 JSON:API error stating that title is required when operation metadata is unavailable. Metadata-derived titles remain authoritative even when a title is supplied.
+        replaces:
+          type: string
+          description: Optional pending approval call Inbox item ID in the same account and work item (including an earlier execution), or the same execution with no work item on either item. Creation and system completion of the old item are atomic; its resolution links the replacement. The old call and history are retained and neither call is dispatched. Nonexistent, malformed, resolved, non-call, non-approval or differently owned references return 422. Explicit replacement creates a fresh pending item even for unchanged arguments; ordinary submissions retain deduplication excluding superseded items.
+        reason:
+          type: string
+          description: Why the call is needed (required); shown to the operator.
     PendingCallAttributes:
       type: object
       additionalProperties: false
@@ -3131,6 +3147,8 @@ components:
       type: object
       additionalProperties: false
       required:
+      - verification_operation_ref_path
+      - verification_observed_result_path
       - verification_completed_path
       - verification_pull_request_url_path
       - verification_merged_at_path
@@ -3155,6 +3173,12 @@ components:
       - capability_key
       - command_template
       properties:
+        verification_operation_ref_path:
+          type: string
+          nullable: true
+        verification_observed_result_path:
+          type: string
+          nullable: true
         verification_completed_path:
           type: string
           nullable: true
@@ -3272,6 +3296,12 @@ components:
       additionalProperties: false
       description: "`archived_at` is not writable; archive with DELETE."
       properties:
+        verification_operation_ref_path:
+          type: string
+          nullable: true
+        verification_observed_result_path:
+          type: string
+          nullable: true
         verification_completed_path:
           type: string
           nullable: true
@@ -3352,6 +3382,12 @@ components:
       - command_template
       description: "`archived_at` is not writable; archive with DELETE."
       properties:
+        verification_operation_ref_path:
+          type: string
+          nullable: true
+        verification_observed_result_path:
+          type: string
+          nullable: true
         verification_completed_path:
           type: string
           nullable: true
@@ -4217,6 +4253,7 @@ components:
         handed to the work that continues. `kind: place` names an exact place to deliver to (`location`: screen
         and field, or external system and location) with an optional `link` (an Autonomat path or an http(s) URL);
         the operator marks the item complete, or chooses the option when this request belongs to a decision option.
+        Content requests require a valid required input; a place or optional input cannot substitute for an answer.
         Secrets are never entered into an item: an input of type `secret`, or an
         input whose label, format_hint or use asks for a password, passphrase, API key, secret, token or credential,
         is a 422 pointing at `/data/attributes/value_request` for an item-level request or
@@ -4235,8 +4272,9 @@ components:
             The type of an input. Use long_text for a brief, description, explanation, reason or any
             answer longer than a few words. It renders a four-row text area that grows with content;
             Enter inserts a line break and Cmd/Ctrl+Enter submits the form. Internal line breaks are
-            preserved in the stored answer and resolution display. Like text, outer whitespace is trimmed
-            and no additional length limit is imposed.
+            preserved in the stored answer and resolution display. Text and long_text preserve the exact supplied
+            content, including surrounding whitespace. Blankness is checked using a trimmed copy; no additional
+            length limit is imposed.
             Use text for short single values such as a name.
         required:
           type: boolean
@@ -4292,6 +4330,19 @@ components:
           type: boolean
         failure:
           type: string
+          nullable: true
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        attempt_count:
+          type: integer
+        active_execution_id:
+          type: integer
           nullable: true
         assessed_at:
           type: string
@@ -4579,6 +4630,22 @@ components:
           maxItems: 0
           items:
             type: string
+    InboxRequestedOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_id, path_params, attributes]
+      description: Concrete requested action evidence. Filing is refused with 422 and an authorized execution or delegation path when the operation is available. Execute through existing APIs and record the result; preserve all approval gates. Unknown identifiers are rejected. Capability presence alone does not establish availability.
+      properties:
+        operation_id:
+          type: string
+        path_params:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        attributes:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
     InboxItemCreateDocument:
       type: object
       additionalProperties: false
@@ -4600,7 +4667,7 @@ components:
                 approval: ["request","reason","title","evidence","continuation","denial_continuation"]
                 access: ["steps","reason","unblocks","evidence","continuation","value_request","title"]
                 information: ["request","context","evidence","continuation","value_request","title","reason"]
-                review: ["request","context","evidence","continuation","title","reason"]
+                review: ["request","context","evidence","continuation","title","reason","value_request"]
                 attestation: ["request","context","evidence","continuation","title","reason"]
                 external_action: ["steps","reason","unblocks","evidence","continuation","value_request","title"]
               required: [category, automation_assessment]
@@ -4609,9 +4676,15 @@ components:
                 (`GET /inbox_requirements`). The defaults are decision: question, context, options (2 to 4,
                 each with a consequence), recommendation (naming an option key), evidence, cost_of_waiting;
                 external_action and access: steps, reason, unblocks, evidence, continuation, value_request; approval: request,
-                reason; information: request, context, evidence, continuation, value_request; review and attestation: request, context, evidence, continuation.
+                reason; information: request, context, evidence, continuation, value_request; review: request, context, evidence, continuation, value_request; attestation: request, context, evidence, continuation.
                 A missing or blank required part is a 422 with one `source.pointer` (`/data/attributes/<part>`) per part; a value that is not a string (any part but `options`) is a 422 pointing at that attribute and nothing is stored. `x-required-by-category` states the default required parts per category.
               properties:
+                content_intent:
+                  type: string
+                  enum: [brief, review, facts, edits, reasons]
+                  description: Declares content that requires a valid required input value_request in any category. Review and information always require content input. Content requested in decision choices requires a required input on every option. Use long_text by default.
+                requested_operation:
+                  $ref: "#/components/schemas/InboxRequestedOperation"
                 automation_assessment:
                   $ref: "#/components/schemas/InboxAutomationAssessmentInput"
                 category:
@@ -4744,6 +4817,14 @@ components:
                  steps, unblocks, cost_of_waiting, value_request, recommendation, required_parts, missing_parts, call, call_result,
                  created_at, updated_at, origin, work_item_id, execution_id, resolution, automation_assessment]
       properties:
+        content_intent:
+          type: string
+          nullable: true
+          enum: [brief, review, facts, edits, reasons]
+        requested_operation:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/InboxRequestedOperation"
         option_call_descriptions:
           type: object
           description: Human descriptions derived from each immutable option call and its recorded source evidence. Unresolved actions cannot be chosen; other choices remain available.
@@ -4780,7 +4861,32 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending, completed]
+          enum: [pending, completed, withdrawn]
+        withdrawal:
+          type: object
+          nullable: true
+          description: Immutable withdrawal reason, evidence, user_id, execution_id and occurred_at. Withdrawal preserves resolutions and executes no continuation.
+          additionalProperties: false
+          required: [reason, evidence, user_id, execution_id, occurred_at]
+          properties:
+            reason:
+              type: string
+            evidence:
+              type: string
+            user_id:
+              type: integer
+              nullable: true
+            execution_id:
+              type: integer
+              nullable: true
+            occurred_at:
+              type: string
+              format: date-time
+        resolutions:
+          type: array
+          description: All historical resolutions, retained unchanged by withdrawal.
+          items:
+            $ref: "#/components/schemas/InboxItemResolution"
         category:
           type: string
           nullable: true
@@ -8455,7 +8561,7 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
   /products/{product_id}/sunset:
     post:
-      summary: Sunset a product (operator action; there is no way back). Moves it through the lifecycle machine to sunset and archives it in the same transaction. In the same transaction, archives its open work items and completes pending Inbox items in the account whose origin is the product or whose work item belongs to it, including already closed work. Each item receives a system resolution with the product name and sunset date. Records and history are preserved. Archived work starts no new executions; running executions are left to finish.
+      summary: Sunset a product (operator action; there is no way back). Moves it through the lifecycle machine to sunset and archives it in the same transaction. In the same transaction, archives its open work items and completes pending Inbox items in the account whose origin is the product or whose work item belongs to it, including already closed work. Each item receives a system resolution with the product name and sunset date, unless it also belongs to an initiative closed by this sunset, in which case it receives the initiative closure reason. Before closing work, it archives refinements that are neither complete nor archived, preventing further follow-through or verification from starting. It removes all active initiative memberships while retaining their history. Each affected draft or active initiative with no remaining active product is archived to `abandoned`; its open work is archived and pending account Inbox items originating from the initiative or linked to any of its work, including already closed work, receive a system resolution stating that the initiative closed because its products were sunset. Initiatives with another active product and already terminal initiatives retain their state and work. Records and history are preserved. Archived work starts no new executions; running executions are left to finish.
       operationId: sunsetProduct
       security:
         - apiToken: []
@@ -8540,7 +8646,7 @@ paths:
           x-qualifiers:
             - key: status
               type: enum
-              values: ["pending","completed"]
+              values: ["pending","completed","withdrawn"]
               description: "One of the listed values; several values separated by commas match any of them, `-status:` negates."
             - key: category
               type: enum
@@ -8694,6 +8800,18 @@ paths:
           status: 422
           auth: apiToken
           body: {"data": {"type": "inbox-items", "attributes": {"category": "information", "request": "Provide the token", "context": "Needed.", "evidence": "None.", "continuation": "Autonomat uses it.", "value_request": {"kind": "input", "label": "API key", "type": "text", "format_hint": "Paste it", "use": "Call the service"}}}}
+        - id: review_input_missing
+          status: 422
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "review", "title": "Renew the launch domain for Alpha Product", "steps": "Renew the domain.", "reason": "Only the owner can log in.", "unblocks": "The launch.", "evidence": "Renewal is due.", "continuation": "Autonomat checks the DNS record.", "automation_assessment": {"disposition": "proposals", "evidence": "The registrar availability check was repeated manually before the operator domain decision.", "proposals": [{"recurring_cause": "Domain decisions require repeated manual availability and renewal preparation.", "evidence": "Both candidate domains were checked at the registrar before requesting the decision.", "exact_change": "Prepare registrar availability and renewal evidence automatically before asking the owner to decide.", "expected_reduction": "Remove repeated availability research while retaining the owner's domain choice and renewal approval.", "execution_type": "refinement", "prerequisites": "Configure authorized read access to the registrar availability records.", "verification_condition": "A domain decision arrives with current recorded availability and renewal evidence without a manual lookup.", "targets": [{"product_id": "~fixture:products:alpha_product"}]}]}, "request": "Provide your response to the Alpha launch brief", "context": "The launch brief needs owner feedback"}}}
+        - id: review_place_rejected
+          status: 422
+          auth: apiToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "review", "title": "Renew the launch domain for Alpha Product", "steps": "Renew the domain.", "reason": "Only the owner can log in.", "unblocks": "The launch.", "evidence": "Renewal is due.", "continuation": "Autonomat checks the DNS record.", "value_request": {"kind": "place", "label": "Registrar renewal", "location": "Registrar dashboard, Domains, example.com", "link": "https://registrar.example.com"}, "automation_assessment": {"disposition": "proposals", "evidence": "The registrar availability check was repeated manually before the operator domain decision.", "proposals": [{"recurring_cause": "Domain decisions require repeated manual availability and renewal preparation.", "evidence": "Both candidate domains were checked at the registrar before requesting the decision.", "exact_change": "Prepare registrar availability and renewal evidence automatically before asking the owner to decide.", "expected_reduction": "Remove repeated availability research while retaining the owner's domain choice and renewal approval.", "execution_type": "refinement", "prerequisites": "Configure authorized read access to the registrar availability records.", "verification_condition": "A domain decision arrives with current recorded availability and renewal evidence without a manual lookup.", "targets": [{"product_id": "~fixture:products:alpha_product"}]}]}, "request": "Provide your response to the Alpha launch brief", "context": "The launch brief needs owner feedback"}}}
+        - id: available_operation_refused
+          status: 422
+          auth: runToken
+          body: {"data": {"type": "inbox-items", "attributes": {"category": "external_action", "title": "Renew the launch domain for Alpha Product", "steps": "Renew the domain.", "reason": "Only the owner can log in.", "unblocks": "The launch.", "evidence": "Renewal is due.", "continuation": "Autonomat checks the DNS record.", "value_request": {"kind": "place", "label": "Registrar renewal", "location": "Registrar dashboard, Domains, example.com", "link": "https://registrar.example.com"}, "automation_assessment": {"disposition": "proposals", "evidence": "The registrar availability check was repeated manually before the operator domain decision.", "proposals": [{"recurring_cause": "Domain decisions require repeated manual availability and renewal preparation.", "evidence": "Both candidate domains were checked at the registrar before requesting the decision.", "exact_change": "Prepare registrar availability and renewal evidence automatically before asking the owner to decide.", "expected_reduction": "Remove repeated availability research while retaining the owner's domain choice and renewal approval.", "execution_type": "refinement", "prerequisites": "Configure authorized read access to the registrar availability records.", "verification_condition": "A domain decision arrives with current recorded availability and renewal evidence without a manual lookup.", "targets": [{"product_id": "~fixture:products:alpha_product"}]}]}, "requested_operation": {"operation_id": "createProductDocument", "path_params": {"product_id": "~fixture:products:alpha_product"}, "attributes": {"kind": "prd", "body": "Updated launch facts"}}}}}
         - id: place_accepted
           status: 201
           auth: apiToken
@@ -9252,7 +9370,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     patch:
-      summary: Update a pending Inbox item's reason and evidence (run token)
+      summary: Update Inbox evidence or submit an automation assessment (run token)
       operationId: updateInboxItem
       x-model: InboxItem
       security:
@@ -9349,6 +9467,116 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /inbox_items/{inbox_item_id}/withdrawal:
+    post:
+      summary: Withdraw an erroneous pending Inbox request without continuation (run token)
+      operationId: withdrawInboxItem
+      description: Requires an explicit capability invocation.operations mapping and allowed command for withdrawInboxItem, effective role grant, enabled role and access to the Inbox item's node. Assessment runs cannot withdraw. User withdrawal is available in Inbox with resolve_inbox permission for the category.
+      security:
+        - apiToken: []
+      parameters:
+        - name: inbox_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: InboxItem
+          in: path
+          key: inbox_item_id
+      x-scenarios:
+        - id: withdrawn
+          status: 200
+          auth: runToken
+          prepare: withdrawalGranted
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Erroneous request", "evidence": "Existing implementation is tracked"}}}
+        - id: unauthorized
+          status: 401
+          auth: invalidToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Erroneous request", "evidence": "Existing implementation is tracked"}}}
+        - id: not_granted
+          status: 403
+          auth: runToken
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Erroneous request", "evidence": "Existing implementation is tracked"}}}
+        - id: not_found
+          status: 404
+          auth: runToken
+          prepare: withdrawalGranted
+          params:
+            inbox_item_id: "0"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "Erroneous request", "evidence": "Existing implementation is tracked"}}}
+        - id: invalid_input
+          status: 422
+          auth: runToken
+          prepare: withdrawalGranted
+          params:
+            inbox_item_id: "~fixture:inbox_items:setup_item_one"
+          body: {"data": {"type": "inbox-items", "attributes": {"reason": "", "evidence": "Evidence"}}}
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [data]
+              properties:
+                data:
+                  type: object
+                  additionalProperties: false
+                  required: [attributes]
+                  properties:
+                    type:
+                      type: string
+                      enum: [inbox-items]
+                    attributes:
+                      type: object
+                      additionalProperties: false
+                      required: [reason, evidence]
+                      properties:
+                        reason:
+                          type: string
+                          minLength: 1
+                        evidence:
+                          type: string
+                          minLength: 1
+      responses:
+        "200":
+          description: Withdrawn request with immutable audit. Identical actor and evidence retries return the existing withdrawal. Different retries and nonpending requests fail validation. No resolution, saved call or dispatch is executed.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/InboxItemDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Run operation grant and node access required
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid evidence, conflicting withdrawal or request is not pending
           content:
             application/vnd.api+json:
               schema:
@@ -9553,6 +9781,7 @@ paths:
   /work_items/{work_item_id}/dispatch:
     post:
       summary: Dispatch a work item (run token)
+      description: Linked external work returns 202 with the retained work item, internal dispatch_reason and external tracking observations. No new execution or operator request is created. Terminal labels alone do not authorize replacement work.
       operationId: dispatchWorkItem
       security:
         - apiToken: []
@@ -9567,6 +9796,12 @@ paths:
           in: path
           key: work_item_id
       x-scenarios:
+        - id: waiting_on_external_work
+          status: 202
+          auth: runToken
+          prepare: externalWorkWait
+          params:
+            work_item_id: "~fixture:work_items:alpha_work_item"
         - id: granted
           status: 201
           auth: runToken
@@ -9609,6 +9844,12 @@ paths:
           params:
             work_item_id: "~fixture:work_items:report_one"
       responses:
+        "202":
+          description: Existing linked work is retained under internal tracking and reconciliation
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/WorkItemDocument"
         "201":
           description: The queued run
           content:
@@ -10681,7 +10922,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     delete:
-      summary: Sunset a product through the lifecycle machine, which also archives it (the record and its history are kept). In the same transaction, archives its open work items and completes pending Inbox items in the account whose origin is the product or whose work item belongs to it, including already closed work. Each item receives a system resolution with the product name and sunset date. Records and history are preserved. Archived work starts no new executions; running executions are left to finish.
+      summary: Sunset a product through the lifecycle machine, which also archives it (the record and its history are kept). In the same transaction, archives its open work items and completes pending Inbox items in the account whose origin is the product or whose work item belongs to it, including already closed work. Each item receives a system resolution with the product name and sunset date, unless it also belongs to an initiative closed by this sunset, in which case it receives the initiative closure reason. Before closing work, it archives refinements that are neither complete nor archived, preventing further follow-through or verification from starting. It removes all active initiative memberships while retaining their history. Each affected draft or active initiative with no remaining active product is archived to `abandoned`; its open work is archived and pending account Inbox items originating from the initiative or linked to any of its work, including already closed work, receive a system resolution stating that the initiative closed because its products were sunset. Initiatives with another active product and already terminal initiatives retain their state and work. Records and history are preserved. Archived work starts no new executions; running executions are left to finish.
       operationId: archiveProduct
       security:
         - apiToken: []
@@ -10890,6 +11131,7 @@ paths:
     post:
       summary: Create a product document and propose its first revision (run token)
       operationId: createProductDocument
+      description: Enabled autonomat-revisions capabilities are provisioned with this operation. Normal run grants and account and node authorization remain required. Creation proposes revision 1 without accepting content.
       x-model: DocumentRevision
       security:
         - apiToken: []
@@ -12864,6 +13106,12 @@ paths:
           params:
             id: "~fixture:work_trackers:acme_tracker"
           body: {"data": {"type": "work-trackers", "attributes": {"verification_completed_path": "attributes.finished", "verification_completed_values": ["done", false], "verification_pull_request_url_path": "attributes.review.url", "verification_merged_at_path": "attributes.review.merged", "verification_merge_sha_path": "attributes.review.sha", "verification_checks_passed_path": "attributes.ok", "verification_checks_passed_value": true}}}
+        - id: action_verification_configured
+          status: 200
+          auth: apiToken
+          params:
+            id: "~fixture:work_trackers:acme_tracker"
+          body: {"data": {"type": "work-trackers", "attributes": {"verification_completed_path": "attributes.finished", "verification_completed_values": ["done"], "verification_operation_ref_path": "attributes.operation", "verification_observed_result_path": "attributes.result"}}}
         - id: verification_cleared
           status: 200
           auth: apiToken
