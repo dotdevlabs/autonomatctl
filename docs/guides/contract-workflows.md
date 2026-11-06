@@ -5,6 +5,15 @@ Commands and flags are generated from the embedded Autonomat contract. Use
 `autonomatctl ai --json` for the current command reference, required flags,
 enums and nested JSON schemas. The synchronized contract is version 9.0.0.
 
+`autonomatctl version` reports the embedded contract's `info.version`, along with
+build metadata. Use `autonomatctl version --json` to read the `version` field in
+scripts. The CLI and its `ai --json` reference use this same contract version;
+these inspection commands work offline.
+
+When moving from a historical v0.1.0–v0.1.9 installation to a 0.0.x contract
+release, follow the [reinstall instructions](../release-notice.md), because
+0.0.x sorts below 0.1.x.
+
 ## Create a product document
 
 With a run token granted access to the product and operation:
