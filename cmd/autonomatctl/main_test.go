@@ -23,8 +23,8 @@ import (
 )
 
 type recorded struct {
-	Method, URI, Auth string
-	Body              string
+	Method, URI, Auth            string
+	Body, ContentType, Signature string
 }
 
 type server struct {
@@ -40,7 +40,7 @@ func newServer(t *testing.T) *server {
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		s.mu.Lock()
-		s.reqs = append(s.reqs, recorded{r.Method, r.RequestURI, r.Header.Get("Authorization"), string(b)})
+		s.reqs = append(s.reqs, recorded{r.Method, r.RequestURI, r.Header.Get("Authorization"), string(b), r.Header.Get("Content-Type"), r.Header.Get("X-Source-Signature")})
 		s.mu.Unlock()
 		status, body := 200, `{"data":{"type":"status","id":"1","attributes":{"ok":true}},"links":{"self":"/status"}}`
 		if s.reply != nil {
@@ -259,12 +259,13 @@ func TestWriteSendsOnlyDocumentedFields(t *testing.T) {
 	sandbox(t)
 	srv := newServer(t)
 	login(t, "x", srv.URL, "t", true)
-	_, errOut, code := cli(t, "work-items", "create", "--item_type", "report", "--title", "T", "--source_kind", "human", "--status", "open", "--tags", "a", "--product_id", "1", "--workable_type", "Initiative", "--workable_id", "1")
+	_, errOut, code := cli(t, "work-items", "create", "--item_type", "report", "--title", "T", "--source_kind", "human", "--status", "open", "--tags", "a", "--product_id", "1", "--workable_type", "Initiative", "--workable_id", "1",
+		"--current_state_evidence", "Missing", "--desired_outcome", "Report ready", "--acceptance_criteria", "Reviewed", "--verification", "Check the report", "--responsible_agent_id", "7", "--description", "Prepare the quarterly report")
 	if code != 0 {
 		t.Fatalf("%d %s", code, errOut)
 	}
 	if r := srv.last(t); r.Method != "POST" || r.URI != "/work_items" ||
-		r.Body != `{"data":{"type":"work-items","attributes":{"item_type":"report","product_id":1,"source_kind":"human","status":"open","tags":["a"],"title":"T","workable_id":1,"workable_type":"Initiative"}}}` {
+		r.Body != `{"data":{"type":"work-items","attributes":{"acceptance_criteria":"Reviewed","current_state_evidence":"Missing","description":"Prepare the quarterly report","desired_outcome":"Report ready","item_type":"report","product_id":1,"responsible_agent_id":"7","source_kind":"human","status":"open","tags":["a"],"title":"T","verification":"Check the report","workable_id":1,"workable_type":"Initiative"}}}` {
 		t.Errorf("request = %+v", r)
 	}
 	n := srv.count()
@@ -281,6 +282,57 @@ func TestWriteSendsOnlyDocumentedFields(t *testing.T) {
 	}
 	if srv.count() != n {
 		t.Error("a request was sent for invalid input")
+	}
+}
+
+func TestSignalDeliveryAuthentication(t *testing.T) {
+	sandbox(t)
+	srv := newServer(t)
+	t.Setenv("AUTONOMATCTL_BASE_URL", srv.URL)
+	t.Setenv("AUTONOMATCTL_SIGNAL_SIGNATURE", "")
+	const body = " {\n  \"id\" : \"event-1\", \"nested\": [true, 7]\n} "
+	const signature = "sha256=source-secret-signature"
+	args := []string{"webhooks", "signal-sources", "signals", "create", "source-1", "--body", body, "--json", "--verbose"}
+	if out, stderr, code := cli(t, append(args, "--token", "webhook-token")...); code != 0 || !json.Valid([]byte(out)) || strings.Contains(stderr, "webhook-token") {
+		t.Fatalf("bearer delivery exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+	if got := srv.last(t); got.Auth != "Bearer webhook-token" || got.ContentType != "application/vnd.api+json" ||
+		got.Body != `{"data":{"attributes":{"id":"event-1","nested":[true,7]}}}` {
+		t.Errorf("unexpected bearer request %+v", got)
+	}
+	signed := append(args, "--signature-header", "X-Source-Signature")
+	if _, _, code := cli(t, signed...); code != 8 || srv.count() != 1 {
+		t.Fatalf("missing signature exit %d, request count %d", code, srv.count())
+	}
+	t.Setenv("AUTONOMATCTL_SIGNAL_SIGNATURE", signature)
+	for _, extra := range [][]string{nil, {"--signature-header", "Authorization"}, {"--signature-header", "Content-Encoding"}, {"--signature-header", "Bad Header"}, {"--signature-header", "X-Source-Signature", "--body", "null"}} {
+		out, stderr, code := cli(t, append(args, extra...)...)
+		if code != 8 || srv.count() != 1 || strings.Contains(out+stderr, signature) {
+			t.Fatalf("invalid signed delivery exit %d, request count %d, stdout %q, stderr %q", code, srv.count(), out, stderr)
+		}
+	}
+	if out, stderr, code := cli(t, append(signed, "--dry-run")...); code != 0 || srv.count() != 1 ||
+		!strings.Contains(out, "<redacted>") && !strings.Contains(out, `\u003credacted\u003e`) ||
+		strings.Contains(out+stderr, signature) || strings.Contains(out, "Authorization") {
+		t.Fatalf("signed preview exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+	for _, extra := range [][]string{nil, {"--token", "ignored-bearer"}} {
+		t.Setenv("AUTONOMATCTL_BASE_URL", strings.Replace(srv.URL, "://", "://ignored:credentials@", 1))
+		out, stderr, code := cli(t, append(signed, extra...)...)
+		if code != 0 || !json.Valid([]byte(out)) || strings.Contains(out+stderr, signature) {
+			t.Fatalf("signed delivery exit %d, stdout %q, stderr %q", code, out, stderr)
+		}
+		if got := srv.last(t); got.Auth != "" || got.Signature != signature || got.ContentType != "application/json" || got.Body != body ||
+			got.Method != "POST" || got.URI != "/webhooks/signal_sources/source-1/signals" {
+			t.Errorf("unexpected signed request %+v", got)
+		}
+	}
+	srv.reply = func(*http.Request) (int, string) {
+		return 401, `{"errors":[{"title":"Credential refused: \u0073` + signature[1:] + `"}]}`
+	}
+	if out, stderr, code := cli(t, signed...); code == 0 || !json.Valid([]byte(out)) ||
+		!strings.Contains(out, "Credential refused") || strings.Contains(out+stderr, signature) {
+		t.Fatalf("signed rejection exit %d, stdout %q, stderr %q", code, out, stderr)
 	}
 }
 
@@ -335,8 +387,19 @@ func TestAIReference(t *testing.T) {
 		}
 	}
 	walkRef(ref.Commands)
+	for _, group := range []string{"routing-rules", "schedule-runs", "work-trackers"} {
+		if strings.Contains(j1, `"`+group+`"`) {
+			t.Errorf("AI reference contains retired command group %s", group)
+		}
+		if c, _, _ := root.Find([]string{group}); c != nil && c.Name() == group {
+			t.Errorf("command tree contains retired group %s", group)
+		}
+	}
 	for _, op := range sp.Operations {
 		c, ok := byOp[op.ID]
+		if ok && op.Webhook() {
+			t.Errorf("AI reference exposes delivery-only operation %s", op.ID)
+		}
 		if !ok {
 			if !hidden[op.ID] {
 				t.Errorf("ai --json lacks visible operation %s", op.ID)

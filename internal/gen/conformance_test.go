@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -108,11 +107,19 @@ func TestConformance(t *testing.T) {
 				args = append(args, v)
 				wantPath = strings.Replace(wantPath, "{"+p+"}", url.PathEscape(v), 1)
 			}
-			wantQuery := map[string]bool{}
+			wantQuery := url.Values{}
 			for _, q := range op.Query {
-				a, _ := sample(q.Name, q.Type, "string", nil)
+				f := cmd.Flags().Lookup(q.Name)
+				if f == nil || (len(f.Annotations[cobra.BashCompOneRequiredFlag]) > 0) != q.Required {
+					t.Errorf("query flag --%s has wrong requiredness or is missing", q.Name)
+				}
+				a, v := sample(q.Name, q.Type, "string", q.Enum)
 				args = append(args, a...)
-				wantQuery[q.Name] = true
+				if q.Type == "array" {
+					wantQuery[q.Name] = []string{"a", "b,c"}
+				} else {
+					wantQuery.Set(q.Name, fmt.Sprint(v))
+				}
 			}
 			wantAttrs := map[string]any{}
 			var wantID string
@@ -124,6 +131,10 @@ func TestConformance(t *testing.T) {
 					wantID = "res-1"
 				}
 				for _, f := range op.Body.Fields {
+					flag := cmd.Flags().Lookup(flagOf(f.Name))
+					if flag == nil || (len(flag.Annotations[cobra.BashCompOneRequiredFlag]) > 0) != (f.Required && !f.HasDefault) {
+						t.Errorf("body flag --%s has wrong requiredness or is missing", flagOf(f.Name))
+					}
 					a, want := sample(f.Name, f.Type, f.ItemType, f.Enum)
 					args = append(args, a...)
 					wantAttrs[f.Name] = want
@@ -157,18 +168,8 @@ func TestConformance(t *testing.T) {
 			if got.Path != wantPath {
 				t.Errorf("path = %s, want %s", got.Path, wantPath)
 			}
-			var gotQuery []string
-			for k := range got.Query {
-				gotQuery = append(gotQuery, k)
-			}
-			var wq []string
-			for k := range wantQuery {
-				wq = append(wq, k)
-			}
-			sort.Strings(gotQuery)
-			sort.Strings(wq)
-			if !reflect.DeepEqual(gotQuery, wq) {
-				t.Errorf("query names = %v, want %v", gotQuery, wq)
+			if !reflect.DeepEqual(got.Query, wantQuery) {
+				t.Errorf("query = %v, want %v", got.Query, wantQuery)
 			}
 			if got.Auth != "Bearer tok-123" || got.Accept != "application/vnd.api+json" {
 				t.Errorf("auth/accept = %q / %q", got.Auth, got.Accept)
@@ -222,6 +223,9 @@ func TestConformance(t *testing.T) {
 				}
 			}
 			attrs, _ := data["attributes"].(map[string]any)
+			if op.Body.FreeformAttributes {
+				wantAttrs = wantAttrs["body"].(map[string]any)
+			}
 			if !reflect.DeepEqual(attrs, wantAttrs) && !(len(attrs) == 0 && len(wantAttrs) == 0) {
 				t.Errorf("attributes = %v, want %v", attrs, wantAttrs)
 			}

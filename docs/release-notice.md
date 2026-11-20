@@ -1,6 +1,6 @@
-The CLI version now follows the embedded API contract. When moving from historical
-v0.1.0–v0.1.9 installs to a 0.0.x contract release, reinstall: version ordering
-otherwise treats the new release as older.
+The CLI version follows the embedded API contract. When moving from v9.0.0 or
+a historical v0.1.0–v0.1.9 installation to contract release v0.0.19, reinstall
+after the new release is available. Semver sorts v0.0.19 below those versions.
 
 ```sh
 brew update
@@ -8,11 +8,10 @@ brew reinstall dotdevlabs/tap/autonomatctl
 autonomatctl version
 ```
 
-For manual installations on Linux amd64, replace TAG below with the intended
-contract release tag (for example, the tag of this release), then run:
+For manual installations on Linux amd64, download the matching contract tag.
 
 ```sh
-TAG=v0.0.PATCH
+TAG=v0.0.19
 gh release download "$TAG" --repo dotdevlabs/autonomatctl --pattern autonomatctl_linux_amd64.tar.gz --pattern checksums.txt
 sha256sum --ignore-missing -c checksums.txt
 tar -xzf autonomatctl_linux_amd64.tar.gz autonomatctl

@@ -35,8 +35,11 @@ func TestLoadPinned(t *testing.T) {
 	if s.Title != "Autonomat API" || s.Version == "" || s.OpenAPI == "" {
 		t.Fatalf("bad header: %+v", s)
 	}
-	if len(s.Operations) != 135 {
+	if len(s.Operations) != 133 {
 		t.Fatalf("operations = %d", len(s.Operations))
+	}
+	for _, id := range []string{"createInboxItemAnswer", "createInboxItemEscalation", "createRunExecution", "createSignalSource", "createWatch", "createWatchCancellation", "deliverSignal", "getSignalSource", "getWatch", "listWatches", "updateSignalSource", "withdrawInboxItem"} {
+		find(t, s, id)
 	}
 	ids := map[string]bool{}
 	for _, o := range s.Operations {
@@ -44,6 +47,11 @@ func TestLoadPinned(t *testing.T) {
 			t.Fatalf("duplicate operationId %s", o.ID)
 		}
 		ids[o.ID] = true
+	}
+	for _, id := range []string{"archiveRoutingRule", "archiveWorkTracker", "cancelScheduleRun", "createRoutingRule", "createWorkTracker", "getRoutingRule", "getScheduleRun", "getWorkTracker", "listRoutingRules", "listScheduleRuns", "listWorkTrackers", "triggerScheduleRun", "updateRoutingRule", "updateWorkTracker"} {
+		if ids[id] {
+			t.Errorf("retired operation %s remains", id)
+		}
 	}
 
 	list := find(t, s, "listWorkItems")

@@ -26,10 +26,10 @@ or `brew install dotdevlabs/tap/autonomatctl`.
 ## Use
 
 ```sh
-autonomatctl auth login --name prod --url https://autonomat.example --token <token> --set-current
+autonomatctl auth login --name prod --url https://autonomat.example --token "$API_TOKEN" --set-current
 autonomatctl work-items list --q 'status:open'
-autonomatctl work-items create --item_type report --title "Review" --source_kind human --status open
-autonomatctl work-items executions create 42 --state pending --json
+autonomatctl work-items get "$WORK_ITEM_ID" --json
+autonomatctl work-items executions create "$WORK_ITEM_ID" --description 'Queue the execution after reviewing the work item' --json
 autonomatctl ai            # ctlkit command reference for agents (markdown); `ai --json` for the structured reference
 autonomatctl schema        # pinned contract version and source commit SHA
 ```
@@ -37,9 +37,10 @@ autonomatctl schema        # pinned contract version and source commit SHA
 Commands are `<resource> [<sub-resource>] <verb>`: `list`, `get`, `create`, `update`, `replace`, `delete`, or
 an action named after the path (`products sunset <id>`). Path parameters are positional arguments. Flags carry
 the contract's exact field names (`--item_type`, not `--item-type`) and query parameter names. Only documented
-fields can be sent: there is no free-form body. Required attributes are enforced before any request.
+fields can be sent. Operations with a documented free-form JSON object accept it through `--body`.
+Required attributes are enforced before any request.
 Destructive operations (`delete`, `products sunset`) need `--yes`. Operations that authenticate with the
-webhook token are hidden from `--help` and omitted from the `ai` reference, but remain callable.
+source delivery credentials alone are hidden from `--help` and omitted from the `ai` reference, but remain callable.
 Every generated command carries `operation_id`, `method` and `path` cobra annotations, which `ai --json` exposes
 under each command's `annotations`; required request fields are required flags (`required: true` in the reference).
 
@@ -48,9 +49,9 @@ under each command's `annotations`; required request fields are required flags (
 `ai --json` publishes each flag's constraints so a client can validate a call before making it:
 
 - `enum` lists the contract's allowed values (attribute and query parameter enums).
-- `schema` is the contract's JSON Schema for object and array-of-object flags (local `$ref`s inlined, `x-*`
+- `schema` is the contract's JSON Schema for flags that take JSON (local `$ref`s inlined, `x-*`
   extensions dropped; a recursive schema is emitted once under `$defs`). OpenAPI 3.0 `nullable` is kept as written.
-- Commands whose request documents `x-required-by-category` (inbox items) carry a `required_by_category`
+- Commands whose request documents `x-required-by-category` (such as inbox item updates) carry a `required_by_category`
   annotation: compact JSON mapping each category to the parts it requires.
 
 List commands get one typed flag per documented `x-qualifiers` entry, named `--q-<key>`: `enum` takes the listed values

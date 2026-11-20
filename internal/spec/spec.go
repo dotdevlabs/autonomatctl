@@ -17,6 +17,8 @@ import (
 // operator surface.
 const WebhookSecurity = "webhookToken"
 
+const SignalSignatureSecurity = "signalSignature"
+
 // Spec is the parsed contract.
 type Spec struct {
 	OpenAPI    string
@@ -39,9 +41,14 @@ type Operation struct {
 	Collection bool
 }
 
-// Webhook reports whether the operation is secured only by the webhook token.
+// Webhook reports whether the operation uses only delivery credentials.
 func (o Operation) Webhook() bool {
-	return len(o.Security) > 0 && allEqual(o.Security, WebhookSecurity)
+	for _, name := range o.Security {
+		if name != WebhookSecurity && name != SignalSignatureSecurity {
+			return false
+		}
+	}
+	return len(o.Security) > 0
 }
 
 // Param is a documented query parameter.
@@ -78,9 +85,11 @@ type Qualifier struct {
 
 // Body describes a JSON:API request document.
 type Body struct {
-	RawJSON     bool // Send the documented JSON object directly, without a JSON:API envelope.
-	ContentType string
-	DataType    string // enum value of data.type, empty when undocumented
+	RawJSON            bool // Send the documented JSON object directly, without a JSON:API envelope.
+	FreeformAttributes bool // Wrap the entire input object in data.attributes.
+	SignedJSON         bool // Accept the same object as exact application/json bytes for signed delivery.
+	ContentType        string
+	DataType           string // enum value of data.type, empty when undocumented
 	// Linkage marks a relationship request whose data is an array of resource
 	// identifiers of DataType.
 	Linkage    bool
@@ -203,15 +212,6 @@ func Load(data []byte) (*Spec, error) {
 	return s, nil
 }
 
-func allEqual(ss []string, v string) bool {
-	for _, s := range ss {
-		if s != v {
-			return false
-		}
-	}
-	return true
-}
-
 // ---- raw document model ----
 
 type node struct {
@@ -268,14 +268,15 @@ type mediaType struct {
 }
 
 type schema struct {
-	Ref         string      `yaml:"$ref"`
-	Type        string      `yaml:"type"`
-	Description string      `yaml:"description"`
-	Enum        []yaml.Node `yaml:"enum"`
-	Required    []string    `yaml:"required"`
-	Properties  props       `yaml:"properties"`
-	Items       *schema     `yaml:"items"`
-	Default     yaml.Node   `yaml:"default"`
+	Ref                  string      `yaml:"$ref"`
+	Type                 string      `yaml:"type"`
+	Description          string      `yaml:"description"`
+	Enum                 []yaml.Node `yaml:"enum"`
+	Required             []string    `yaml:"required"`
+	Properties           props       `yaml:"properties"`
+	Items                *schema     `yaml:"items"`
+	Default              yaml.Node   `yaml:"default"`
+	AdditionalProperties yaml.Node   `yaml:"additionalProperties"`
 
 	RequiredByCategory map[string][]string `yaml:"x-required-by-category"`
 

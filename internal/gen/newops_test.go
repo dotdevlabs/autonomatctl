@@ -8,7 +8,7 @@ import (
 	"github.com/dotdevlabs/autonomatctl/internal/spec"
 )
 
-// newOps are the operations added to the contract in 1.2.0, 1.7.0 and 1.12.0. Each row pins the
+// newOps are selected operations from the current contract. Each row pins the
 // command, the request line and the exact attribute names the contract uses.
 var newOps = []struct {
 	id       string
@@ -21,23 +21,22 @@ var newOps = []struct {
 	pathArgs []string // positional path parameters, in order
 }{
 	{"getAccount", "account get", "GET", "/account", "", nil, nil, nil},
-	{"updateAccount", "account update", "PATCH", "/account", "", nil, []string{"name", "worker_address", "worker_ingest_token", "default_model_credential_id", "review_max_interval_days", "reconcile_settings", "reconcile_window_minutes", "reconcile_model_runs_daily_limit", "work_sync_interval_minutes", "work_item_status_map", "conversation_answer_settings", "work_item_procedure_key", "external_ref_display_rules"}, nil},
+	{"updateAccount", "account update", "PATCH", "/account", "", nil, []string{"name", "ceo_agent_id", "cpo_agent_id", "worker_address", "worker_ingest_token", "default_model_credential_id", "review_max_interval_days", "reconcile_settings", "reconcile_model_runs_daily_limit", "work_sync_interval_minutes", "work_item_status_map", "conversation_answer_settings", "work_item_procedure_key", "review_procedure_key", "external_ref_display_rules", "external_refs"}, nil},
 	{"getHealthRules", "health-rules get", "GET", "/health_rules", "", nil, nil, nil},
 	{"updateHealthRules", "health-rules update", "PATCH", "/health_rules", "", nil, []string{"window_days", "key_metrics", "standard", "state_rules"}, nil},
 	{"getSpend", "spend get", "GET", "/spend", "", nil, nil, nil},
 	{"getStatus", "status get", "GET", "/status", "", nil, nil, nil},
 	{"listWorkItems", "work-items list", "GET", "/work_items", "", nil, nil, nil},
 	{"listExecutions", "executions list", "GET", "/executions", "", nil, nil, nil},
-	{"createWorkItem", "work-items create", "POST", "/work_items", "work-items", []string{"item_type", "title", "product_id", "workable_type", "workable_id"},
-		[]string{"item_type", "title", "body", "tags", "source_kind", "source_ref", "status", "dispatch_reason", "parent_id", "merged_into_id", "reconcile", "depends_on_ids", "model_credential_id", "agent_role_id", "product_id", "workable_type", "workable_id"}, nil},
+	{"createWorkItem", "work-items create", "POST", "/work_items", "work-items", []string{"current_state_evidence", "desired_outcome", "acceptance_criteria", "verification", "responsible_agent_id", "description", "item_type", "title", "product_id", "workable_type", "workable_id"},
+		[]string{"current_state_evidence", "desired_outcome", "acceptance_criteria", "verification", "responsible_agent_id", "description", "item_type", "title", "body", "tags", "source_kind", "source_ref", "status", "reason", "parent_id", "merged_into_id", "reconcile", "depends_on_ids", "model_credential_id", "agent_role_id", "product_id", "workable_type", "workable_id"}, nil},
 	{"getWorkItem", "work-items get", "GET", "/work_items/{id}", "", nil, nil, []string{"w1"}},
-	{"createExecution", "work-items executions create", "POST", "/work_items/{work_item_id}/executions", "executions", []string{"state"},
-		[]string{"usage_notional", "state", "agent_role_id", "started_at", "finished_at", "usage", "model_credential_id", "applied_correction_ids", "hatchet_run_id"}, []string{"w1"}},
+	{"createExecution", "work-items executions create", "POST", "/work_items/{work_item_id}/executions", "", []string{"description"}, []string{"description"}, []string{"w1"}},
 	{"sunsetProduct", "products sunset", "POST", "/products/{product_id}/sunset", "", nil, nil, []string{"p1"}},
-	{"updateInboxItem", "inbox-items update", "PATCH", "/inbox_items/{id}", "inbox-items", nil, []string{"automation_assessment", "title", "question", "context", "options", "steps", "request", "reason", "unblocks", "evidence", "recommendation", "continuation", "denial_continuation", "cost_of_waiting", "value_request"}, []string{"i1"}},
-	{"createInboxItemResolution", "inbox-items resolution create", "POST", "/inbox_items/{inbox_item_id}/resolution", "inbox-item-resolutions", nil, []string{"evidence"}, []string{"i1"}},
+	{"updateInboxItem", "inbox-items update", "PATCH", "/inbox_items/{id}", "inbox-items", nil, []string{"content_intent", "requested_operation", "title", "question", "context", "options", "steps", "request", "reason", "unblocks", "evidence", "recommendation", "continuation", "denial_continuation", "cost_of_waiting", "value_request"}, []string{"i1"}},
+	{"createInboxItemResolution", "inbox-items resolution create", "POST", "/inbox_items/{inbox_item_id}/resolution", "inbox-item-resolutions", nil, []string{"evidence", "description"}, []string{"i1"}},
 	{"createPendingCall", "pending-calls create", "POST", "/pending_calls", "pending-calls", nil, []string{"capability", "arguments", "title", "replaces", "reason"}, nil},
-	{"dispatchWorkItem", "work-items dispatch", "POST", "/work_items/{work_item_id}/dispatch", "", nil, nil, []string{"w1"}},
+	{"dispatchWorkItem", "work-items dispatch create", "POST", "/work_items/{work_item_id}/dispatch", "", []string{"description"}, []string{"description"}, []string{"w1"}},
 	{"createWorkItemSteering", "work-items steering create", "POST", "/work_items/{work_item_id}/steering", "steering-instructions", nil, []string{"instruction"}, []string{"w1"}},
 	{"createInitiativeSteering", "initiatives steering create", "POST", "/initiatives/{initiative_id}/steering", "steering-instructions", nil, []string{"instruction"}, []string{"n1"}},
 	{"createProductDocument", "products documents create", "POST", "/products/{product_id}/documents", "document-revisions", []string{"kind", "body"}, []string{"kind", "body", "summary"}, []string{"p1"}},
@@ -56,14 +55,14 @@ var newOps = []struct {
 	{"listInboxItems", "inbox-items list", "GET", "/inbox_items", "", nil, nil, nil},
 	{"getInboxRequirements", "inbox-requirements get", "GET", "/inbox_requirements", "", nil, nil, nil},
 	{"updateInboxRequirements", "inbox-requirements update", "PATCH", "/inbox_requirements", "", nil, []string{"decision", "approval", "access", "information", "review", "attestation", "external_action"}, nil},
-	{"createInboxItem", "inbox-items create", "POST", "/inbox_items", "inbox-items", []string{"automation_assessment", "category"},
-		[]string{"automation_assessment", "category", "cause_key", "title", "question", "context", "options", "steps", "request", "reason", "unblocks", "evidence", "recommendation", "continuation", "denial_continuation", "cost_of_waiting", "value_request"}, nil},
+	{"createInboxItem", "inbox-items create", "POST", "/inbox_items", "inbox-items", []string{"subject", "category", "request", "escalation_chain", "evidence", "options", "recommendation", "prepared_result", "unblocks", "money_at_stake", "automation_plan"},
+		[]string{"subject", "category", "escalation_chain", "options", "request", "unblocks", "evidence", "recommendation", "prepared_result", "money_at_stake", "automation_plan"}, nil},
 	{"getInboxItem", "inbox-items get", "GET", "/inbox_items/{id}", "", nil, nil, []string{"a1"}},
 	{"listInitiatives", "initiatives list", "GET", "/initiatives", "", nil, nil, nil},
-	{"createInitiative", "initiatives create", "POST", "/initiatives", "", []string{"key", "title"}, []string{"key", "title", "status", "automatic_dispatch_paused", "daily_budget_cents", "started_on", "target_on", "success_criteria", "concluded_on", "product_ids"}, nil},
+	{"createInitiative", "initiatives create", "POST", "/initiatives", "", []string{"key", "title"}, []string{"external_refs", "responsible_agent_id", "description", "key", "title", "status", "automatic_dispatch_paused", "daily_budget_cents", "started_on", "target_on", "success_criteria", "concluded_on", "product_ids"}, nil},
 	{"getInitiative", "initiatives get", "GET", "/initiatives/{id}", "", nil, nil, []string{"a1"}},
-	{"updateInitiative", "initiatives update", "PATCH", "/initiatives/{id}", "", nil, []string{"title", "status", "automatic_dispatch_paused", "daily_budget_cents", "started_on", "target_on", "success_criteria", "concluded_on"}, []string{"a1"}},
-	{"archiveInitiative", "initiatives delete", "DELETE", "/initiatives/{id}", "", nil, nil, []string{"a1"}},
+	{"updateInitiative", "initiatives update", "PATCH", "/initiatives/{id}", "", nil, []string{"external_refs", "responsible_agent_id", "title", "status", "description", "automatic_dispatch_paused", "daily_budget_cents", "started_on", "target_on", "success_criteria", "concluded_on"}, []string{"a1"}},
+	{"archiveInitiative", "initiatives delete", "DELETE", "/initiatives/{id}", "", []string{"description"}, []string{"description"}, []string{"a1"}},
 	{"listPolicies", "policies list", "GET", "/policies", "", nil, nil, nil},
 	{"createPolicy", "policies create", "POST", "/policies", "policies", nil, []string{"key", "applies_when", "requires", "attempt_limit", "time_limit", "owner_node", "body", "enabled"}, nil},
 	{"getPolicy", "policies get", "GET", "/policies/{id}", "", nil, nil, []string{"a1"}},
@@ -71,34 +70,44 @@ var newOps = []struct {
 	{"archivePolicy", "policies delete", "DELETE", "/policies/{id}", "", nil, nil, []string{"a1"}},
 	{"listProducts", "products list", "GET", "/products", "", nil, nil, nil},
 	{"getProduct", "products get", "GET", "/products/{id}", "", nil, nil, []string{"a1"}},
-	{"updateProduct", "products update", "PATCH", "/products/{id}", "products", nil, []string{"name", "purpose", "next_action", "daily_budget", "key_metrics", "external_refs", "parent_id"}, []string{"a1"}},
+	{"updateProduct", "products update", "PATCH", "/products/{id}", "products", nil, []string{"owner_agent_id", "name", "purpose", "next_action", "daily_budget", "key_metrics", "external_refs", "parent_id"}, []string{"a1"}},
 	{"archiveProduct", "products delete", "DELETE", "/products/{id}", "", nil, nil, []string{"a1"}},
 	{"listProductDocuments", "products documents list", "GET", "/products/{product_id}/documents", "", nil, nil, []string{"a1"}},
 	{"listDocumentRevisions", "products documents revisions list", "GET", "/products/{product_id}/documents/{document_id}/revisions", "", nil, nil, []string{"a1", "a2"}},
 	{"getDocumentRevision", "products documents revisions get", "GET", "/products/{product_id}/documents/{document_id}/revisions/{id}", "", nil, nil, []string{"a1", "a2", "a3"}},
 	{"getProductDocument", "products documents get", "GET", "/products/{product_id}/documents/{id}", "", nil, nil, []string{"a1", "a2"}},
 	{"listRefinements", "refinements list", "GET", "/refinements", "", nil, nil, nil},
-	{"createRefinement", "refinements create", "POST", "/refinements", "", []string{"product_id", "title"}, []string{"signal_ids", "product_id", "title", "status", "diagnosis", "bounded_scope", "expected_outcome", "execution_path", "outcome", "verification_notes"}, nil},
+	{"createRefinement", "refinements create", "POST", "/refinements", "", []string{"product_id", "title"}, []string{"responsible_agent_id", "description", "signal_ids", "product_id", "title", "status", "diagnosis", "bounded_scope", "expected_outcome", "execution_path", "outcome", "verification_notes"}, nil},
 	{"getRefinement", "refinements get", "GET", "/refinements/{id}", "", nil, nil, []string{"a1"}},
-	{"updateRefinement", "refinements update", "PATCH", "/refinements/{id}", "", nil, []string{"title", "status", "diagnosis", "bounded_scope", "expected_outcome", "execution_path", "outcome", "verification_notes"}, []string{"a1"}},
+	{"updateRefinement", "refinements update", "PATCH", "/refinements/{id}", "", nil, []string{"responsible_agent_id", "title", "status", "description", "diagnosis", "bounded_scope", "expected_outcome", "execution_path", "outcome", "verification_notes", "signal_ids"}, []string{"a1"}},
 	{"archiveRefinement", "refinements delete", "DELETE", "/refinements/{id}", "", nil, nil, []string{"a1"}},
 	{"listSchedules", "schedules list", "GET", "/schedules", "", nil, nil, nil},
 	{"getSchedule", "schedules get", "GET", "/schedules/{id}", "", nil, nil, []string{"a1"}},
-	{"updateSchedule", "schedules update", "PATCH", "/schedules/{id}", "schedules", nil, []string{"kind", "enabled", "max_concurrent_runs", "at", "timezone", "description", "steps"}, []string{"a1"}},
+	{"updateSchedule", "schedules update", "PATCH", "/schedules/{id}", "schedules", nil, []string{"key", "subject_type", "subject_id", "procedure", "cron_expression", "timezone", "responsible_agent_id", "description", "state"}, []string{"a1"}},
 	{"listSignals", "signals list", "GET", "/signals", "", nil, nil, nil},
-	{"createSignal", "signals create", "POST", "/signals", "signals", []string{"kind"}, []string{"kind", "body", "received_on", "product_id", "signal_source_id", "fields"}, nil},
+	{"createSignal", "signals create", "POST", "/signals", "signals", []string{"kind"}, []string{"origin", "subject_tool", "subject_external_id", "subject_container_external_id", "subject_account_external_id", "subject_url", "observed_state", "observed_version", "observed_at", "kind", "body", "received_on", "product_id", "signal_source_id", "fields"}, nil},
 	{"getSignal", "signals get", "GET", "/signals/{id}", "", nil, nil, []string{"a1"}},
 	{"listStandards", "standards list", "GET", "/standards", "", nil, nil, nil},
 	{"getStandard", "standards get", "GET", "/standards/{id}", "", nil, nil, []string{"a1"}},
 	{"listStandardRevisions", "standards revisions list", "GET", "/standards/{standard_id}/revisions", "", nil, nil, []string{"a1"}},
 	{"getStandardRevision", "standards revisions get", "GET", "/standards/{standard_id}/revisions/{id}", "", nil, nil, []string{"a1", "a2"}},
-	{"updateWorkItem", "work-items update", "PATCH", "/work_items/{id}", "", nil, []string{"title", "status", "agent_role_id", "next_action", "reconcile", "depends_on_ids"}, []string{"a1"}},
-	{"archiveWorkItem", "work-items delete", "DELETE", "/work_items/{id}", "", nil, nil, []string{"a1"}},
+	{"updateWorkItem", "work-items update", "PATCH", "/work_items/{id}", "", nil, []string{"responsible_agent_id", "current_state_evidence", "desired_outcome", "acceptance_criteria", "verification", "title", "status", "description", "reason", "agent_role_id", "next_action", "reconcile", "depends_on_ids"}, []string{"a1"}},
+	{"archiveWorkItem", "work-items delete", "DELETE", "/work_items/{id}", "", []string{"description"}, []string{"description"}, []string{"a1"}},
+	{"createInboxItemAnswer", "inbox-items answer create", "POST", "/inbox_items/{inbox_item_id}/answer", "", []string{"option", "note", "plan_choice"}, []string{"option", "value", "note", "plan_choice", "automation_plan"}, []string{"i1"}},
+	{"createInboxItemEscalation", "inbox-items escalation create", "POST", "/inbox_items/{inbox_item_id}/escalation", "", []string{"reason"}, []string{"reason"}, []string{"i1"}},
+	{"withdrawInboxItem", "inbox-items withdrawal create", "POST", "/inbox_items/{inbox_item_id}/withdrawal", "inbox-items", []string{"description", "reason", "evidence"}, []string{"description", "reason", "evidence"}, []string{"i1"}},
+	{"createRunExecution", "runs create-run-execution", "POST", "/runs/{run_id}/execution", "", nil, nil, []string{"r1"}},
+	{"listWatches", "watches list", "GET", "/watches", "", nil, nil, nil},
+	{"getWatch", "watches get", "GET", "/watches/{id}", "", nil, nil, []string{"watch1"}},
+	{"createWatch", "watches create", "POST", "/watches", "watches", []string{"owner_type", "owner_id", "capability_id", "tool", "external_id", "condition"}, []string{"owner_type", "owner_id", "capability_id", "signal_source_id", "tool", "external_id", "url", "expires_at", "condition"}, nil},
+	{"createWatchCancellation", "watches cancellation create", "POST", "/watches/{watch_id}/cancellation", "", []string{"description"}, []string{"description"}, []string{"watch1"}},
+	{"getSignalSource", "signal-sources get", "GET", "/signal_sources/{id}", "", nil, nil, []string{"source1"}},
+	{"createSignalSource", "signal-sources create", "POST", "/signal_sources", "signal_sources", []string{"name", "kind"}, []string{"name", "kind", "summary", "reconciliation_cursor", "settings", "webhook_mode", "webhook_signature_header", "webhook_digest", "webhook_signature_prefix", "webhook_event_id_field", "webhook_secret"}, nil},
+	{"updateSignalSource", "signal-sources update", "PATCH", "/signal_sources/{id}", "signal_sources", nil, []string{"name", "kind", "summary", "reconciliation_cursor", "settings", "webhook_mode", "webhook_signature_header", "webhook_digest", "webhook_signature_prefix", "webhook_event_id_field", "webhook_secret"}, []string{"source1"}},
 }
 
-// TestNewContractOperations covers every operation that the pinned contract
-// added: the subcommand, exact field names, required flags, and the request
-// sent on the wire.
+// TestNewContractOperations pins command names, fields and wire requests for
+// current contract additions and changed operations.
 func TestNewContractOperations(t *testing.T) {
 	sp := pinnedSpec(t)
 	srv := newStub(t)
@@ -203,6 +212,32 @@ func TestNewContractOperations(t *testing.T) {
 	}
 }
 
+func TestRunExecutionRetryCount(t *testing.T) {
+	sp := pinnedSpec(t)
+	srv := newStub(t)
+	if _, _, err := run(t, sp, srv.URL, "runs", "create-run-execution", "r1", "--retry_count", "0"); err != nil {
+		t.Fatal(err)
+	}
+	got := srv.requests()[0]
+	if got.Method != "POST" || got.Path != "/runs/r1/execution" || got.Query.Get("retry_count") != "0" || len(got.Body) != 0 || got.ContentType != "" {
+		t.Errorf("unexpected run admission request %+v", got)
+	}
+}
+
+func TestInboxAnswerAcceptsScalarValue(t *testing.T) {
+	sp := pinnedSpec(t)
+	srv := newStub(t)
+	if _, _, err := run(t, sp, srv.URL, "inbox-items", "answer", "create", "i1",
+		"--option", "go", "--note", "Approve the pilot", "--plan_choice", "approve_only", "--value", `"pilot"`); err != nil {
+		t.Fatal(err)
+	}
+	got := decode(t, srv.requests()[0].Body)["data"].(map[string]any)["attributes"]
+	want := map[string]any{"option": "go", "note": "Approve the pilot", "plan_choice": "approve_only", "value": "pilot"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("answer attributes = %v, want %v", got, want)
+	}
+}
+
 // TestEveryOperationHasCommand compares the contract's operationIds with the
 // generated commands in both directions.
 func TestEveryOperationHasCommand(t *testing.T) {
@@ -249,8 +284,8 @@ func TestListFiltersAreTyped(t *testing.T) {
 			continue
 		}
 		op := find(t, sp, tc.id)
-		if len(op.Query) == 0 {
-			t.Errorf("%s: no query parameters documented", tc.id)
+		if (len(op.Query) == 0) != (tc.id == "listWatches") {
+			t.Errorf("%s: unexpected query parameters %v", tc.id, op.Query)
 		}
 		for _, q := range op.Query {
 			f := byOp[tc.id].Flags().Lookup(q.Name)

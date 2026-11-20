@@ -160,8 +160,11 @@ func TestPinnedTypedContract(t *testing.T) {
 	if n == 0 {
 		t.Fatal("pinned contract has no typed qualifiers")
 	}
-	if find(t, s, "createInboxItem").Body.RequiredByCategory["decision"] == nil {
-		t.Fatal("createInboxItem lacks x-required-by-category")
+	if len(find(t, s, "createInboxItem").Body.RequiredByCategory) != 0 {
+		t.Fatal("createInboxItem has obsolete x-required-by-category")
+	}
+	if find(t, s, "updateInboxItem").Body.RequiredByCategory["decision"] == nil {
+		t.Fatal("updateInboxItem lacks x-required-by-category")
 	}
 }
 
