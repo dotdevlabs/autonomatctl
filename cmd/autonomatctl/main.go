@@ -149,15 +149,15 @@ func workflows() []airef.Workflow {
 			Description: "List open work items as JSON, then read one in full.",
 			Steps: []string{
 				`autonomatctl work-items list --q 'status:open' --json`,
-				`autonomatctl work-items get <id> --json`,
+				`autonomatctl work-items get "$WORK_ITEM_ID" --json`,
 			},
 		},
 		{
 			Name:        "Create a work item and start an execution",
 			Description: "Create a work item, then create an execution for it. The work item id is in data.id of the first response.",
 			Steps: []string{
-				`autonomatctl work-items create --item_type report --title "Quarterly review" --source_kind human --status open --json`,
-				`autonomatctl work-items executions create <work_item_id> --state pending --json`,
+				`autonomatctl work-items create --item_type report --title "Quarterly review" --product_id "$PRODUCT_ID" --workable_type Initiative --workable_id "$INITIATIVE_ID" --responsible_agent_id "$AGENT_ID" --current_state_evidence "Quarterly figures are available" --desired_outcome "Publish a reviewed quarterly report" --acceptance_criteria "Include reconciled totals" --verification "Compare totals with the ledger" --description "Queue the review now that the ledger is closed" --json`,
+				`autonomatctl work-items executions create "$WORK_ITEM_ID" --description "Queue an execution to review the quarterly figures" --json`,
 			},
 		},
 		{
@@ -169,16 +169,16 @@ func workflows() []airef.Workflow {
 		},
 		{
 			Name:        "Preview a write",
-			Description: "--dry-run prints the method, URL and body that would be sent, with the token redacted, and sends nothing.",
+			Description: "--dry-run prints the method, URL and body with the token redacted, without sending a request.",
 			Steps: []string{
-				`autonomatctl work-items create --item_type report --title "Draft" --source_kind human --status open --dry-run`,
+				`autonomatctl work-items executions create "$WORK_ITEM_ID" --description "Queue an execution to review the quarterly figures" --dry-run`,
 			},
 		},
 		{
 			Name:        "Run as an agent with a run-scoped token",
 			Description: "No stored context is needed when the base URL and token come from the environment.",
 			Steps: []string{
-				`AUTONOMATCTL_TOKEN=<run-token> autonomatctl status get --json`,
+				`AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs execution get "$RUN_ID" --json`,
 			},
 		},
 		{

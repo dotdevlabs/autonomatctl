@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const jsonAPIType = "application/vnd.api+json"
@@ -73,6 +75,20 @@ func (l *loader) operation(path, method string, r *rawOp) (Operation, error) {
 			return op, err
 		}
 		op.Body = b
+		if b.FreeformAttributes && contains(op.Security, SignalSignatureSecurity) {
+			mt := r.RequestBody.Content["application/json"]
+			if mt == nil || mt.Schema == nil {
+				return op, fmt.Errorf("signature delivery requires an application/json schema")
+			}
+			s, err := l.resolve(mt.Schema)
+			if err != nil {
+				return op, err
+			}
+			if s.Type != "object" {
+				return op, fmt.Errorf("signature delivery requires a JSON object")
+			}
+			b.SignedJSON = true
+		}
 	}
 
 	coll, err := l.collection(r.Responses)
@@ -181,6 +197,16 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 		return nil, err
 	}
 	b.RequiredByCategory = attrs.RequiredByCategory
+	if attrs.Type == "object" && len(attrs.Properties.keys) == 0 &&
+		(attrs.AdditionalProperties.Kind == yaml.MappingNode || attrs.AdditionalProperties.Value == "true") {
+		sch, err := l.jsonSchema(attrs.raw)
+		if err != nil {
+			return nil, err
+		}
+		b.FreeformAttributes = true
+		b.Fields = []Field{{Name: "body", Type: "object", Required: rb.Required, Schema: sch, Description: attrs.Description}}
+		return b, nil
+	}
 	for _, name := range attrs.Properties.keys {
 		fs, err := l.resolve(attrs.Properties.m[name])
 		if err != nil {
@@ -193,7 +219,7 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 			Required:    contains(attrs.Required, name),
 		}
 		if f.Type == "" {
-			f.Type = "object"
+			f.Type = "value"
 		}
 		if fs.Default.Kind != 0 {
 			if err := fs.Default.Decode(&f.Default); err != nil {
@@ -211,7 +237,7 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 			}
 			f.ItemType = is.Type
 		}
-		if f.Type == "object" || (f.Type == "array" && f.ItemType != "string") {
+		if f.Type == "object" || f.Type == "value" || (f.Type == "array" && f.ItemType != "string") {
 			sch, err := l.jsonSchema(fs.raw)
 			if err != nil {
 				return nil, fmt.Errorf("attribute %s schema: %w", name, err)

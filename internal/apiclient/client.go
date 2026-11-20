@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -53,11 +54,40 @@ type Client struct {
 
 // Request is one call: Path is the already expanded contract path.
 type Request struct {
-	Method      string
-	Path        string
-	Query       url.Values
-	Body        []byte
-	ContentType string
+	Method          string
+	Path            string
+	Query           url.Values
+	Body            []byte
+	ContentType     string
+	signatureHeader string
+	signature       string
+}
+
+var (
+	headerName = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+	jsonString = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+)
+
+// SignDelivery configures the source's signature credential for this request.
+func (r *Request) SignDelivery(header, signature string) error {
+	name := strings.ToLower(header)
+	switch name {
+	case "accept", "accept-encoding", "authorization", "connection", "cookie", "cookie2", "expect",
+		"forwarded", "host", "keep-alive", "origin", "referer", "set-cookie", "te", "trailer",
+		"transfer-encoding", "upgrade", "user-agent", "via", "www-authenticate":
+		return clierror.New(clierror.CodeUsage, "signature header is reserved", "")
+	}
+	if strings.HasPrefix(name, "content-") {
+		return clierror.New(clierror.CodeUsage, "signature header is reserved", "")
+	}
+	if !headerName.MatchString(header) || strings.HasPrefix(name, "proxy-") || strings.HasPrefix(name, "x-forwarded-") {
+		return clierror.New(clierror.CodeUsage, "invalid signature header", "")
+	}
+	if strings.TrimSpace(signature) == "" || strings.ContainsFunc(signature, func(r rune) bool { return r < 32 || r == 127 }) {
+		return clierror.New(clierror.CodeUsage, "invalid or missing AUTONOMATCTL_SIGNAL_SIGNATURE", "")
+	}
+	r.signatureHeader, r.signature = http.CanonicalHeaderKey(header), signature
+	return nil
 }
 
 // Response is a raw HTTP response.
@@ -117,7 +147,11 @@ func New(o Options) (*Client, error) {
 
 // URL returns the absolute URL of r.
 func (c *Client) URL(r Request) string {
-	u := strings.TrimRight(c.base.String(), "/") + r.Path
+	base := *c.base
+	if r.signatureHeader != "" {
+		base.User = nil
+	}
+	u := strings.TrimRight(base.String(), "/") + r.Path
 	if len(r.Query) > 0 {
 		u += "?" + r.Query.Encode()
 	}
@@ -128,6 +162,10 @@ func (c *Client) URL(r Request) string {
 // redacted. It backs --dry-run.
 func (c *Client) Headers(r Request) map[string]string {
 	h := map[string]string{"Accept": MediaType, "User-Agent": c.opts.UserAgent, "Authorization": "Bearer <redacted>"}
+	if r.signatureHeader != "" {
+		delete(h, "Authorization")
+		h[r.signatureHeader] = "<redacted>"
+	}
 	if len(r.Body) > 0 {
 		h["Content-Type"] = contentType(r)
 	}
@@ -144,52 +182,88 @@ func contentType(r Request) string {
 // Do sends r and returns the response whatever its status. Only transport
 // failures are errors.
 func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
-	return c.send(ctx, r.Method, c.URL(r), r.Body, contentType(r))
+	return c.send(ctx, c.URL(r), r)
 }
 
-func (c *Client) send(ctx context.Context, method, target string, body []byte, ctype string) (*Response, error) {
-	if c.opts.Token == "" {
+func (c *Client) send(ctx context.Context, target string, r Request) (*Response, error) {
+	if c.opts.Token == "" && r.signatureHeader == "" {
 		return nil, clierror.New(clierror.CodeUnauthorized, "no API token configured",
 			"run 'auth login --name <ctx> --url <url> --token <token>' or set AUTONOMATCTL_TOKEN")
+	}
+	client := c.http
+	if r.signatureHeader != "" {
+		// A source credential and the exact bytes it authenticates belong to
+		// the configured endpoint, even if that endpoint returns a redirect.
+		signed := *client
+		signed.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &signed
 	}
 	var lastStatus int
 	for attempt := 1; ; attempt++ {
 		var rdr io.Reader
-		if len(body) > 0 {
-			rdr = bytes.NewReader(body)
+		if len(r.Body) > 0 {
+			rdr = bytes.NewReader(r.Body)
 		}
-		req, err := http.NewRequestWithContext(ctx, method, target, rdr)
+		req, err := http.NewRequestWithContext(ctx, r.Method, target, rdr)
 		if err != nil {
 			return nil, clierror.New(clierror.CodeUsage, "cannot build request: "+err.Error(), "")
 		}
 		req.Header.Set("Accept", MediaType)
-		req.Header.Set("Authorization", "Bearer "+c.opts.Token)
+		if r.signatureHeader != "" {
+			req.Header.Set(r.signatureHeader, r.signature)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+c.opts.Token)
+		}
 		req.Header.Set("User-Agent", c.opts.UserAgent)
-		if len(body) > 0 {
-			req.Header.Set("Content-Type", ctype)
+		if len(r.Body) > 0 {
+			req.Header.Set("Content-Type", contentType(r))
 		}
 
-		resp, err := c.http.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
+			if r.signatureHeader != "" {
+				return nil, clierror.New(clierror.CodeServerError, "signed delivery request failed", "")
+			}
 			return nil, clierror.New(clierror.CodeServerError, "request failed: "+redactErr(err), "")
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		_ = resp.Body.Close()
 		if err != nil {
+			if r.signatureHeader != "" {
+				return nil, clierror.New(clierror.CodeServerError, "reading signed delivery response failed", "")
+			}
 			return nil, clierror.New(clierror.CodeServerError, "reading response failed: "+err.Error(), "")
 		}
+		if r.signatureHeader != "" && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+			// Preserve the server's error document while masking an echoed credential.
+			data = redactSignature(data, r.signature)
+		}
 		if c.opts.Verbose != nil {
-			_, _ = fmt.Fprintf(c.opts.Verbose, "%s %s -> %d\n", method, target, resp.StatusCode)
+			_, _ = fmt.Fprintf(c.opts.Verbose, "%s %s -> %d\n", r.Method, target, resp.StatusCode)
 		}
 		lastStatus = resp.StatusCode
 		out := &Response{Status: resp.StatusCode, Header: resp.Header, Body: data}
-		if attempt >= c.opts.MaxAttempts || !retryable(method, lastStatus) {
+		if attempt >= c.opts.MaxAttempts || !retryable(r.Method, lastStatus) {
 			return out, nil
 		}
 		if err := sleep(ctx, c.delay(resp.Header, attempt)); err != nil {
 			return nil, clierror.New(clierror.CodeServerError, "request cancelled: "+err.Error(), "")
 		}
 	}
+}
+
+func redactSignature(body []byte, signature string) []byte {
+	if !json.Valid(body) {
+		return bytes.ReplaceAll(body, []byte(signature), []byte("<redacted>"))
+	}
+	return jsonString.ReplaceAllFunc(body, func(raw []byte) []byte {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil || !strings.Contains(s, signature) {
+			return raw
+		}
+		masked, _ := json.Marshal(strings.ReplaceAll(s, signature, "<redacted>"))
+		return masked
+	})
 }
 
 // redactErr drops the URL that net/http embeds in transport errors so that a
@@ -246,7 +320,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 // response is returned unmerged.
 func (c *Client) FetchAll(ctx context.Context, r Request) (*Response, error) {
 	cur := c.URL(r)
-	resp, err := c.send(ctx, http.MethodGet, cur, nil, "")
+	resp, err := c.send(ctx, cur, Request{Method: http.MethodGet})
 	if err != nil || resp.Status >= 400 {
 		return resp, err
 	}
@@ -280,7 +354,7 @@ func (c *Client) FetchAll(ctx context.Context, r Request) (*Response, error) {
 				fmt.Sprintf("stopped after %d pages", c.opts.MaxPages), "narrow the query")
 		}
 		seen[cur] = true
-		resp, err = c.send(ctx, http.MethodGet, cur, nil, "")
+		resp, err = c.send(ctx, cur, Request{Method: http.MethodGet})
 		if err != nil || resp.Status >= 400 {
 			return resp, err
 		}

@@ -15,14 +15,12 @@ func TestReservedBodyFieldGetsAttrFlag(t *testing.T) {
 	sp := pinnedSpec(t)
 	srv := newStub(t)
 	byOp := commandsByOperation(testRoot(t, sp, srv.URL, fastCfg()))
-	for _, id := range []string{"createInboxItem", "updateInboxItem"} {
-		c := byOp[id]
-		if f := c.Flags().Lookup("attr-context"); f == nil || !strings.Contains(f.Usage, "context") {
-			t.Fatalf("%s: no --attr-context flag with a mapping note", id)
-		}
-		if c.Flags().Lookup("context") != nil {
-			t.Errorf("%s: local --context shadows the global flag", id)
-		}
+	c := byOp["updateInboxItem"]
+	if f := c.Flags().Lookup("attr-context"); f == nil || !strings.Contains(f.Usage, "context") {
+		t.Fatal("update has no --attr-context flag with a mapping note")
+	}
+	if c.Flags().Lookup("context") != nil {
+		t.Error("local --context shadows the global flag")
 	}
 	args := []string{"inbox-items", "update", "i1", "--attr-context", "why now"}
 	if _, stderr, err := run(t, sp, srv.URL, args...); err != nil {
@@ -49,21 +47,18 @@ func TestInboxOptionsTakeJSONArray(t *testing.T) {
 		`[{"key":"a","label":"A","consequence":"Continue","call":{"capability":"deploy","arguments":{"subcommand":"deploy","settings":{"regions":["us","eu"],"enabled":true}},"reason":"Ship approved revision"},"value_request":{"kind":"input","label":"Release name","type":"text","required":true}},{"key":"b","label":"Wait","consequence":"Defer"}]`,
 		`[{"key":"a","label":"A","consequence":"Continue"}]`,
 	} {
-		for _, args := range [][]string{{"inbox-items", "create", "--category", "decision", "--automation_assessment", `{"disposition":"exception","evidence":"Operator decision needed","exception":{"reason_key":"human_judgment","explanation":"Requires operator judgment","evidence":"No automated decision available","remaining_human_action":"Choose the release name","why_partial_automation_cannot_help":"The operator owns this choice","reconsideration_conditions":"Reconsider when naming rules exist"}}`}, {"inbox-items", "update", "i1"}} {
-			args = append(args, "--options", opts)
-			if _, stderr, err := run(t, sp, srv.URL, args...); err != nil {
-				t.Fatalf("%v\n%s", err, stderr)
-			}
-			reqs := srv.requests()
-			data := decode(t, reqs[len(reqs)-1].Body)["data"].(map[string]any)
-			attrs := data["attributes"].(map[string]any)
-			var want any
-			if err := json.Unmarshal([]byte(opts), &want); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(attrs["options"], want) {
-				t.Errorf("options = %v, want %v", attrs["options"], want)
-			}
+		if _, stderr, err := run(t, sp, srv.URL, "inbox-items", "update", "i1", "--options", opts); err != nil {
+			t.Fatalf("%v\n%s", err, stderr)
+		}
+		reqs := srv.requests()
+		data := decode(t, reqs[len(reqs)-1].Body)["data"].(map[string]any)
+		attrs := data["attributes"].(map[string]any)
+		var want any
+		if err := json.Unmarshal([]byte(opts), &want); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(attrs["options"], want) {
+			t.Errorf("options = %v, want %v", attrs["options"], want)
 		}
 	}
 	n := len(srv.requests())
@@ -73,6 +68,38 @@ func TestInboxOptionsTakeJSONArray(t *testing.T) {
 	}
 	if len(srv.requests()) != n {
 		t.Error("a request was sent for invalid options")
+	}
+}
+
+func TestInboxEscalationCreate(t *testing.T) {
+	sp := pinnedSpec(t)
+	srv := newStub(t)
+	base := []string{"inbox-items", "create"}
+	for _, invalid := range [][]string{{"--category", "decision"}, {"--automation_assessment", "{}"}} {
+		if _, _, err := run(t, sp, srv.URL, append(base, invalid...)...); err == nil {
+			t.Fatalf("accepted incomplete or obsolete arguments %v", invalid)
+		}
+	}
+	if len(srv.requests()) != 0 {
+		t.Fatal("sent a request with incomplete or obsolete arguments")
+	}
+	options := `[{"key":"go","label":"Proceed","consequence":{"continues":"Pilot","spent":"$10","not_done":"Full rollout"}},{"key":"wait","label":"Wait","consequence":{"continues":"Review","spent":"$0","not_done":"Pilot"}}]`
+	plan := `{"action":"grant","target":"Capability:7","exact_change":{"scope":{"project":"pilot"},"expires_at":"2030-01-01T00:00:00Z","uses":1},"summary":"Allow future pilot runs"}`
+	args := append(base, "--subject", "Approve the pilot?", "--category", "decision",
+		"--escalation_chain", `[{"agent_id":5,"reason":"Approval is required"}]`,
+		"--request", `{"action":"enable","target":"pilot","exact_change":"enable one project","duration":"one day","values":{"enabled":true}}`,
+		"--evidence", "Pilot checks passed", "--options", options, "--recommendation", "go",
+		"--prepared_result", "Pilot configuration is ready", "--unblocks", "Limited rollout",
+		"--money_at_stake", `{"amount_minor":1000,"currency":"USD"}`, "--automation_plan", plan)
+	if _, _, err := run(t, sp, srv.URL, args...); err != nil {
+		t.Fatal(err)
+	}
+	got := decode(t, srv.requests()[0].Body)["data"].(map[string]any)
+	attrs := got["attributes"].(map[string]any)
+	if got["type"] != "inbox-items" || len(attrs) != 11 ||
+		!reflect.DeepEqual(attrs["automation_plan"], decode(t, []byte(plan))) ||
+		!reflect.DeepEqual(attrs["options"], decode(t, []byte(`{"options":`+options+`}`))["options"]) {
+		t.Errorf("unexpected create document %v", got)
 	}
 }
 

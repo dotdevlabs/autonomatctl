@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,6 +35,9 @@ const (
 	// compact JSON ({"<category>":["<part>",...]}).
 	AnnRequiredByCategory = "required_by_category"
 )
+
+const signatureHeaderFlag = "signature-header"
+const signatureEnv = "AUTONOMATCTL_SIGNAL_SIGNATURE"
 
 // reservedFlags are the global flags and the CLI-only flags; a contract field
 // of the same name cannot be mirrored and fails generation loudly.
@@ -310,7 +314,7 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 	if op.Webhook() {
 		cmd.Hidden = true
 		cmd.Annotations[AnnWebhook] = "true"
-		cmd.Long += "\n\nWebhook delivery: authenticates with the webhook token, not an operator API token."
+		cmd.Long += "\n\nWebhook delivery requires source delivery credentials."
 	}
 	want := len(op.PathParams)
 	cmd.Args = func(_ *cobra.Command, args []string) error {
@@ -340,6 +344,13 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 		return claimFlag(n)
 	}
 	fs := cmd.Flags()
+	if op.Body != nil && op.Body.SignedJSON {
+		if err := claim(signatureHeaderFlag); err != nil {
+			return nil, err
+		}
+		fs.String(signatureHeaderFlag, "", "Source-configured signature header (value from "+signatureEnv+")")
+		cmd.Long += "\n\nFor bearer delivery, use the source's webhook token. For signed delivery, set --signature-header and " + signatureEnv + " and pass the exact signed JSON object to --body."
+	}
 	for _, q := range op.Query {
 		if err := claim(q.Name); err != nil {
 			return nil, err
@@ -526,7 +537,30 @@ func request(c *cobra.Command, op spec.Operation, idIn *input, inputs []input, q
 	if len(query) > 0 {
 		req.Query = query
 	}
-	if op.Body != nil && op.Body.RawJSON {
+	if op.Body != nil && op.Body.FreeformAttributes {
+		raw, ok := attrs["body"].(json.RawMessage)
+		if !ok || !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+			return req, clierror.New(clierror.CodeUsage, "--body: expected a JSON object", "")
+		}
+		if op.Body.SignedJSON {
+			header, _ := c.Flags().GetString(signatureHeaderFlag)
+			signature := os.Getenv(signatureEnv)
+			if c.Flags().Changed(signatureHeaderFlag) || signature != "" {
+				if err := req.SignDelivery(header, signature); err != nil {
+					return req, err
+				}
+				req.Body, req.ContentType = raw, "application/json"
+				return req, nil
+			}
+		}
+		body, err := json.Marshal(struct {
+			Data map[string]json.RawMessage `json:"data"`
+		}{Data: map[string]json.RawMessage{"attributes": raw}})
+		if err != nil {
+			return req, err
+		}
+		req.Body, req.ContentType = body, op.Body.ContentType
+	} else if op.Body != nil && op.Body.RawJSON {
 		body, err := json.Marshal(attrs["body"])
 		if err != nil {
 			return req, err
