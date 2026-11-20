@@ -19,8 +19,8 @@ these groups.
 ## Submit a run result
 
 Use the target run's own token with a grant for `createRunResult`. Submit the
-answer while the run is running. For a run without a work item outcome, send
-only the answer.
+nonblank answer while the run is running. For a run other than a work run,
+send only the answer.
 
 ```sh
 AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs execution get "$RUN_ID" --json
@@ -28,7 +28,9 @@ AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs result create "$RUN_ID" \
   --answer 'The review is complete.' --json
 ```
 
-For a work run, include the outcome object. Its state reports execution progress.
+Work runs require `--item_outcome`. Its `state` reports execution progress and
+can be `completed`, `interrupted`, `stopped`, or `failed`. Use `note` to explain
+an unsuccessful outcome. The answer and note cannot contain NUL characters.
 
 ```sh
 AUTONOMATCTL_TOKEN="$WORK_RUN_TOKEN" autonomatctl runs result create "$WORK_RUN_ID" \
@@ -39,7 +41,7 @@ AUTONOMATCTL_TOKEN="$WORK_RUN_TOKEN" autonomatctl runs result create "$WORK_RUN_
 HTTP 204 means the result was accepted or the same result had already been
 submitted. The command exits successfully with empty stdout even with
 `--json`. The agent service's terminal report ends the run and uses the stored
-result.
+result. A retry with different content returns HTTP 409.
 
 ## Create a product document
 
@@ -142,6 +144,12 @@ Set the source kind and tool for your provider. Use `kind:id` for external IDs.
 The text after the first colon is case-sensitive. Each exact event type has
 its own mapping, with a required `item` and optional `container` and `account`
 kind and field pairs.
+
+When creating a signal directly with `signals create`, use an account token
+to set external subject fields. Supply typed IDs in `--subject_external_id`,
+`--subject_container_external_id`, and `--subject_account_external_id` as
+applicable. For webhook delivery, send the provider's original IDs and let
+the source mapping supply the kinds.
 
 ```sh
 autonomatctl signal-sources create --name 'Deployment events' --kind "$SOURCE_KIND" \
