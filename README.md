@@ -140,7 +140,23 @@ builds the CLI and checks that the tag without `v`, the binary's reported versio
 and the embedded contract's `info.version` all agree. Any mismatch stops release
 and reports all three values. Release notes include the reinstall notice above.
 
-Push a tag `vX.Y.Z`; the Release workflow runs goreleaser: static (`CGO_ENABLED=0`) binaries for
+From a clean checkout of the commit you intend to release, build the candidate
+and derive the tag from its embedded contract before pushing it.
+
+```sh
+(
+  set -eu
+  release_dir=$(mktemp -d)
+  trap 'rm -rf "$release_dir"' EXIT
+  CGO_ENABLED=0 go build -trimpath -o "$release_dir/autonomatctl" ./cmd/autonomatctl
+  release=$(go run ./cmd/check-release --contract-tag "$release_dir/autonomatctl")
+  tag=v$(printf '%s\n' "$release" | jq -er '.tag_version')
+  git tag -a "$tag" -m "Release $tag"
+  git push origin "refs/tags/$tag"
+)
+```
+
+The Release workflow runs goreleaser to publish static (`CGO_ENABLED=0`) binaries for
 linux/darwin/windows × amd64/arm64, `checksums.txt`, a GitHub Release, and the Homebrew formula
 (needs `HOMEBREW_TAP_GITHUB_TOKEN`). Check locally with `goreleaser check` and
 `goreleaser build --snapshot --clean`.

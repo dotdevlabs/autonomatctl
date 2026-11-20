@@ -19,7 +19,13 @@ func TestRun(t *testing.T) {
 	if run([]string{"v" + schema.Version(), binary}) != 0 {
 		t.Fatal("matching release failed")
 	}
+	if run([]string{"--contract-tag", binary}) != 0 {
+		t.Fatal("contract tag failed")
+	}
 	if run([]string{"v999.0.0", binary}) != 1 {
 		t.Fatal("mismatch passed")
+	}
+	if run([]string{"--contract-tag", os.DevNull}) != 1 {
+		t.Fatal("contract tag accepted an invalid binary")
 	}
 }
