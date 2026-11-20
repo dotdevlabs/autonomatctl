@@ -12,6 +12,9 @@ these inspection commands work offline.
 
 When moving from v9.0.0 or a historical v0.1.0–v0.1.9 installation, follow
 the [reinstall instructions](../release-notice.md) once v0.0.19 is available.
+The contract retires the `routing-rules`, `work-trackers` and `schedule-runs`
+command groups. Check `autonomatctl ai --json` when updating scripts that used
+these groups.
 
 ## Create a product document
 
@@ -31,8 +34,10 @@ of an existing document, use `products documents revisions create PRODUCT_ID DOC
 ## File and answer an inbox escalation
 
 An asking agent files an escalation to its manager. Set `ASKING_AGENT_ID` to the
-authenticated agent's numeric ID and `PLAN_EXPIRES_AT` to a future RFC 3339 timestamp.
-Use account-scoped record references from your deployment in the request and plan.
+authenticated agent's numeric ID, `CAPABILITY_ID` to the ID of the capability in
+the proposed grant, and `PLAN_EXPIRES_AT` to a future RFC 3339 timestamp. The
+create command uses `--automation_plan` for the proposed change. Remove the
+retired `--automation_assessment` flag from create scripts.
 
 ```sh
 autonomatctl inbox-items create --subject 'Approve the pilot?' --category decision \
@@ -47,8 +52,9 @@ autonomatctl inbox-items create --subject 'Approve the pilot?' --category decisi
   --json
 ```
 
-The authorized recipient can answer or escalate to their manager. An authorized
-run can withdraw an erroneous pending item with a description, reason and evidence.
+Choose the action that applies to the pending item. The authorized recipient
+can answer or escalate to their manager. An authorized run can withdraw an
+erroneous item with a description, reason and evidence.
 
 ```sh
 autonomatctl inbox-items answer create "$INBOX_ITEM_ID" --option go --note 'Approve the one-day pilot' --plan_choice approve_only
@@ -129,13 +135,16 @@ AUTONOMATCTL_TOKEN="$WEBHOOK_TOKEN" autonomatctl webhooks signal-sources signals
   --body '{"id":"event-42","status":"succeeded"}' --json
 ```
 
-A signed source receives a plain JSON object and the externally computed HMAC
-signature, including any configured prefix. Sign the exact bytes in
-`PROVIDER_JSON` and pass the signature through `AUTONOMATCTL_SIGNAL_SIGNATURE`.
-Use the source's configured header and event ID field. The CLI sends the
-original bytes and redacts the signature in its dry-run headers.
+A signed source receives a plain JSON object. Include a nonblank string or an
+integer in the configured top-level event ID field. Compute the HMAC over the
+exact bytes in `PROVIDER_JSON` using the source's configured digest (SHA256,
+SHA384 or SHA512). Encode the HMAC as lowercase hex, prepend any configured
+literal prefix, and pass the result through `AUTONOMATCTL_SIGNAL_SIGNATURE`.
+Set `--signature-header` to the source's configured header. The CLI sends the
+original bytes as `application/json` and redacts the signature in dry-run output.
 Select the destination using the usual context or `AUTONOMATCTL_BASE_URL`.
-Signed delivery needs only the source signature credential.
+Signed delivery omits the `Authorization` header. For bearer delivery, leave
+both `AUTONOMATCTL_SIGNAL_SIGNATURE` and `--signature-header` unset.
 
 ```sh
 AUTONOMATCTL_SIGNAL_SIGNATURE="$PROVIDER_SIGNATURE" autonomatctl webhooks signal-sources signals create "$SIGNAL_SOURCE_ID" \
