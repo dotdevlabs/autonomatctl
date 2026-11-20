@@ -285,6 +285,62 @@ func TestWriteSendsOnlyDocumentedFields(t *testing.T) {
 	}
 }
 
+func TestRunResultSubmission(t *testing.T) {
+	sandbox(t)
+	srv := newServer(t)
+	srv.reply = func(*http.Request) (int, string) { return http.StatusNoContent, "" }
+	t.Setenv("AUTONOMATCTL_BASE_URL", srv.URL)
+	t.Setenv("AUTONOMATCTL_TOKEN", "test-run-token")
+	base := []string{"runs", "result", "create", "Run/42", "--json"}
+	const answer = "Review finished.\nSee the report."
+	for _, tc := range []struct {
+		name    string
+		outcome string
+		want    map[string]any
+	}{
+		{name: "without outcome"},
+		{name: "with outcome", outcome: `{"state":"failed","note":"Missing report"}`, want: map[string]any{"state": "failed", "note": "Missing report"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string(nil), base...), "--answer", answer)
+			attrs := map[string]any{"answer": answer}
+			if tc.outcome != "" {
+				args = append(args, "--item_outcome", tc.outcome)
+				attrs["item_outcome"] = tc.want
+			}
+			before := srv.count()
+			out, errOut, code := cli(t, args...)
+			if code != 0 || out != "" || errOut != "" || srv.count() != before+1 {
+				t.Fatalf("exit %d, stdout %q, stderr %q, requests %d", code, out, errOut, srv.count()-before)
+			}
+			got := srv.last(t)
+			if got.Method != http.MethodPost || got.URI != "/runs/Run%2F42/result" ||
+				got.Auth != "Bearer test-run-token" || got.ContentType != "application/vnd.api+json" {
+				t.Errorf("unexpected result request: %+v", got)
+			}
+			var body map[string]any
+			want := map[string]any{"data": map[string]any{"attributes": attrs}}
+			if err := json.Unmarshal([]byte(got.Body), &body); err != nil || !reflect.DeepEqual(body, want) {
+				t.Errorf("body = %s, want %v (decode error: %v)", got.Body, want, err)
+			}
+		})
+	}
+	before := srv.count()
+	for _, flags := range [][]string{nil, {"--answer", answer, "--item_outcome", "{"}, {"--answer", answer, "--item_outcome", "[]"}} {
+		if _, errOut, code := cli(t, append(base, flags...)...); code != 8 || errOut == "" {
+			t.Errorf("flags %q: exit %d, stderr %q", flags, code, errOut)
+		}
+	}
+	if srv.count() != before {
+		t.Error("invalid input reached the API")
+	}
+	const conflict = `{"errors":[{"title":"A different result has already been accepted"}]}`
+	srv.reply = func(*http.Request) (int, string) { return http.StatusConflict, conflict }
+	if out, _, code := cli(t, append(base, "--answer", answer)...); code != 5 || out != conflict+"\n" {
+		t.Errorf("conflict: exit %d, stdout %q", code, out)
+	}
+}
+
 func TestSignalDeliveryAuthentication(t *testing.T) {
 	sandbox(t)
 	srv := newServer(t)
@@ -381,12 +437,27 @@ func TestAIReference(t *testing.T) {
 	walkRef = func(cs []airef.CommandRef) {
 		for _, c := range cs {
 			if id := c.Annotations[gen.AnnOperationID]; id != "" {
+				if _, exists := byOp[id]; exists {
+					t.Errorf("AI reference repeats operation %s", id)
+				}
 				byOp[id] = c
 			}
 			walkRef(c.Subcommands)
 		}
 	}
 	walkRef(ref.Commands)
+	var hasAnswer, hasOutcome bool
+	for _, f := range byOp["createRunResult"].Flags {
+		switch f.Name {
+		case "answer":
+			hasAnswer = f.Required
+		case "item_outcome":
+			hasOutcome = !f.Required && strings.Contains(f.Usage, "JSON object")
+		}
+	}
+	if !hasAnswer || !hasOutcome {
+		t.Error("createRunResult must expose a required answer and optional JSON object outcome")
+	}
 	for _, group := range []string{"routing-rules", "schedule-runs", "work-trackers"} {
 		if strings.Contains(j1, `"`+group+`"`) {
 			t.Errorf("AI reference contains retired command group %s", group)

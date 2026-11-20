@@ -277,6 +277,7 @@ type schema struct {
 	Items                *schema     `yaml:"items"`
 	Default              yaml.Node   `yaml:"default"`
 	AdditionalProperties yaml.Node   `yaml:"additionalProperties"`
+	AllOf                []*schema   `yaml:"allOf"`
 
 	RequiredByCategory map[string][]string `yaml:"x-required-by-category"`
 

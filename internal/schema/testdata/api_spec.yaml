@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "0.0.19"
+  version: "0.0.21"
   x-version-stage: development
 components:
   securitySchemes:
@@ -21,6 +21,27 @@ components:
       name: X-LoopControl-Signature
       description: Example header name. Use the signature header configured on the signal source.
   schemas:
+    TypedExternalId:
+      type: string
+      pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
+      description: External identity in kind:id form. The identifier after the first colon is opaque and case-sensitive.
+      example: task:2433
+    SignalSourceSettings:
+      type: object
+      description: Set event_type_field to the output path containing the exact event type. Each message_mapping entry requires item and can define container and account, each with kind and field. Entries may also map event_id, state, version, observed_at, url and product_id to output paths.
+      additionalProperties:
+        $ref: "#/components/schemas/JsonValue"
+      example:
+        tool: loopcontrol
+        event_type_field: event_type
+        message_mapping:
+          task.stage_changed:
+            item: {kind: task, field: task_id}
+            container: {kind: project, field: project_id}
+            state: new_stage
+            version: stage_version
+          project.created:
+            item: {kind: project, field: project_id}
     SignalSourceCreateDocument:
       type: object
       description: A source receives a recurring poll when it has a configured event listing or a linked watching watch. Webhook-only sources without linked watches have no polling schedule.
@@ -43,9 +64,7 @@ components:
                 summary: {type: string, nullable: true}
                 reconciliation_cursor: {type: string, nullable: true}
                 settings:
-                  type: object
-                  additionalProperties:
-                    $ref: "#/components/schemas/JsonValue"
+                  $ref: "#/components/schemas/SignalSourceSettings"
                 webhook_mode: {type: string, enum: [bearer, signed], default: bearer}
                 webhook_signature_header: {type: string, nullable: true}
                 webhook_digest: {type: string, enum: [SHA256, SHA384, SHA512], nullable: true}
@@ -75,9 +94,7 @@ components:
                 summary: {type: string, nullable: true}
                 reconciliation_cursor: {type: string, nullable: true}
                 settings:
-                  type: object
-                  additionalProperties:
-                    $ref: "#/components/schemas/JsonValue"
+                  $ref: "#/components/schemas/SignalSourceSettings"
                 webhook_mode: {type: string, enum: [bearer, signed], default: bearer}
                 webhook_signature_header: {type: string, nullable: true}
                 webhook_digest: {type: string, enum: [SHA256, SHA384, SHA512], nullable: true}
@@ -109,9 +126,7 @@ components:
                 summary: {type: string, nullable: true}
                 state: {type: string, enum: [active, failed, disabled]}
                 settings:
-                  type: object
-                  additionalProperties:
-                    $ref: "#/components/schemas/JsonValue"
+                  $ref: "#/components/schemas/SignalSourceSettings"
                 reconciliation_cursor: {type: string, nullable: true}
                 webhook_mode: {type: string, enum: [bearer, signed]}
                 webhook_signature_header: {type: string, nullable: true}
@@ -1211,6 +1226,9 @@ components:
         tool_id:
           type: string
           nullable: true
+          description: >-
+            Positive decimal ID of a tool in the run's account. An invalid or unknown supplied ID refuses only
+            that action, records the reason without a tool reference, and lets report processing continue.
         summary:
           type: string
           nullable: true
@@ -1350,7 +1368,8 @@ components:
           type: string
           nullable: true
           description: >-
-            Why the work did not finish. Failed, interrupted and stopped outcomes retain the note
+            Why the work did not finish. The note cannot contain a NUL character.
+            Failed, interrupted and stopped outcomes retain the note
             in failed transition metadata (trimmed to 1000 characters and scrubbed of known credentials), exposed as derived failure_reason and shown
             in the conversation ("The agent run failed: <note>", linked to the execution) and on the
             execution page. Without a note an answer run shows the generic "The agent run failed."
@@ -4737,7 +4756,11 @@ components:
             capability_id: {type: string}
             signal_source_id: {type: string, nullable: true}
             tool: {type: string}
-            external_id: {type: string, nullable: true}
+            external_id:
+              type: string
+              nullable: true
+              pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
+              description: Typed external ID in kind:id form, or null for a global watch.
             scope_level: {type: string, enum: [global, account, project, item], nullable: true}
             ended_at: {type: string, format: date-time, nullable: true}
             url: {type: string, nullable: true}
@@ -4776,14 +4799,17 @@ components:
         subject_external_id:
           type: string
           nullable: true
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
         subject_container_external_id:
           type: string
           nullable: true
-          description: External project or container ID supplied by the event.
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
+          description: External project or container ID in kind:id form.
         subject_account_external_id:
           type: string
           nullable: true
-          description: Account ID in the external system supplied by the event.
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
+          description: External account ID in kind:id form.
         subject_url:
           type: string
           nullable: true
@@ -4879,10 +4905,16 @@ components:
           type: string
         subject_external_id:
           type: string
+          nullable: true
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
         subject_container_external_id:
           type: string
+          nullable: true
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
         subject_account_external_id:
           type: string
+          nullable: true
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?![\u0009-\u000D \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+(?![\s\S]))[^\u0000\u0009-\u000D ](?:[^\u0000]*[^\u0000\u0009-\u000D ])?(?![\s\S])'
         subject_url:
           type: string
         observed_state:
@@ -7764,7 +7796,8 @@ paths:
           required: false
           description: |
             Filter query supporting typed qualifiers and free text. Example: `kind:usage product:my-product source:Sentry since:2026-10-01 sort:received-desc`.
-            Scoped item lookup uses `owner:"product:42" tool:loopcontrol external_id:8` and returns signals in ascending ID order.
+            Scoped item lookup uses `owner:"product:42" tool:loopcontrol external_id:task:8` and returns signals in ascending ID order.
+            To preserve an opaque ID exactly, quote the entire qualifier value. Inside the quotes use `\"` for a double quote and `\\` for a backslash, and include line breaks literally before URL-encoding q.
             Owner types are account, product and initiative. Owner filters require a positive numeric ID.
             Unknown qualifiers and invalid values return 422.
             A reference filter such as `product:` accepts the record's id (as in API resources) or its key, e.g. `product:424` or `product:my-product`.
@@ -7788,7 +7821,7 @@ paths:
               description: "Exact external tool key."
             - key: external_id
               type: text
-              description: "Exact external item ID."
+              description: "Exact external item ID in kind:id form."
             - key: since
               type: date
               description: "A date (YYYY-MM-DD) on received_on, with >=, >, <=, < or a range `from..to`."
@@ -7843,7 +7876,7 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
     post:
       summary: Create a signal (a metric reading is a signal with the metric, value and period in its fields)
-      description: Signals are immutable facts. Duplicate source events, or subject/state/version facts within the account and source, increment occurrence_count without changing updated_at or enqueuing another matcher. Product is optional and does not split fact identity. Source settings can map message_mapping.external_id, message_mapping.container_external_id and message_mapping.account_external_id to the external item, project and account IDs in the event. Run tokens may create ordinary signals. External subject fields require a signal source or an account token. New facts are matched against owner watches after five seconds. Opaque versions require an observed timestamp; otherwise versions are nonnegative integers.
+      description: Signals are immutable facts. Duplicate source events or identical facts within the account and source increment occurrence_count. Source settings map each event type to typed item, container and account IDs. Run tokens may create ordinary signals. External subject fields require an account token for direct API creation. New facts are matched against owner watches after five seconds. Only observations with state and a timestamp or nonnegative integer version can advance a stateful watch.
       operationId: createSignal
       x-model: IncomingSignal
       security:
@@ -8000,7 +8033,8 @@ paths:
                         capability_id: {type: string}
                         signal_source_id: {type: string}
                         tool: {type: string}
-                        external_id: {type: string}
+                        external_id:
+                          $ref: "#/components/schemas/TypedExternalId"
                         url: {type: string}
                         expires_at: {type: string, format: date-time}
                         condition:
@@ -11002,6 +11036,78 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+  /runs/{run_id}/result:
+    post:
+      summary: Submit the run's final result
+      operationId: createRunResult
+      description: >-
+        Requires the target run's own usable run token and a granted tool that maps this operation.
+        Stores the result while the run is running. The agent service's terminal report ends the run
+        and uses the stored result. An identical retry succeeds without changing the stored result.
+        A NUL character in the answer or work outcome note returns 422.
+      security:
+        - apiToken: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [data]
+              properties:
+                data:
+                  type: object
+                  additionalProperties: false
+                  required: [attributes]
+                  properties:
+                    attributes:
+                      type: object
+                      additionalProperties: false
+                      required: [answer]
+                      properties:
+                        answer:
+                          type: string
+                          minLength: 1
+                          pattern: '\S'
+                          description: Nonblank final answer text without NUL characters.
+                        item_outcome:
+                          description: Required for work runs and accepted only for work runs. Reports progress without verifying the work.
+                          allOf:
+                            - $ref: "#/components/schemas/ItemOutcomeInput"
+      responses:
+        "204":
+          description: Result accepted or already submitted with identical content
+        "401":
+          description: Missing or unusable token, including expired, revoked or terminal-run credentials
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: An account token, another run's token or a run without the operation grant
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "409":
+          description: The run is not running or a different result has already been accepted
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Malformed request or missing or invalid result fields
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
   /runs/{run_id}/model_credential:
     patch:
       summary: Save the run's refreshed model credential
@@ -11233,6 +11339,8 @@ paths:
         with `data.type` set to `run-results` and `data.id` set to the execution ID.
         Every report requires a `status` and a meaningful `description` explaining the transition.
         Terminal reports require a nonblank `summary` describing the result.
+        A terminal report uses the answer and work item outcome already accepted by `createRunResult`.
+        It may omit both fields. Valid legacy result fields are used when the run has no accepted submission.
         For success, send `succeeded` (legacy aliases `finished` and `completed` also work)
         and optionally supply the schedule output as a string in `answer`.
         For failure, send `failed`, explain the cause in `summary`, and optionally provide

@@ -3,7 +3,7 @@
 Commands and flags are generated from the embedded Autonomat contract. Use
 `autonomatctl schema` to inspect its version and source commit, and
 `autonomatctl ai --json` for the current command reference, required flags,
-enums and nested JSON schemas. The synchronized contract is version 0.0.19.
+enums and nested JSON schemas. The synchronized contract is version 0.0.21.
 
 `autonomatctl version` reports the embedded contract's `info.version`, along with
 build metadata. Use `autonomatctl version --json` to read the `version` field in
@@ -11,10 +11,35 @@ scripts. The CLI and its `ai --json` reference use this same contract version;
 these inspection commands work offline.
 
 When moving from v9.0.0 or a historical v0.1.0–v0.1.9 installation, follow
-the [reinstall instructions](../release-notice.md) once v0.0.19 is available.
+the [reinstall instructions](../release-notice.md) once v0.0.21 is available.
 The contract retires the `routing-rules`, `work-trackers` and `schedule-runs`
 command groups. Check `autonomatctl ai --json` when updating scripts that used
 these groups.
+
+## Submit a run result
+
+Use the target run's own token with a grant for `createRunResult`. Submit the
+answer while the run is running. For a run without a work item outcome, send
+only the answer.
+
+```sh
+AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs execution get "$RUN_ID" --json
+AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs result create "$RUN_ID" \
+  --answer 'The review is complete.' --json
+```
+
+For a work run, include the outcome object. Its state reports execution progress.
+
+```sh
+AUTONOMATCTL_TOKEN="$WORK_RUN_TOKEN" autonomatctl runs result create "$WORK_RUN_ID" \
+  --answer 'The report could not be generated.' \
+  --item_outcome '{"state":"failed","note":"The ledger export was unavailable."}' --json
+```
+
+HTTP 204 means the result was accepted or the same result had already been
+submitted. The command exits successfully with empty stdout even with
+`--json`. The agent service's terminal report ends the run and uses the stored
+result.
 
 ## Create a product document
 
@@ -113,18 +138,24 @@ Inspect the generated reference for credential fields and the new
 
 Use an operator context to configure signal sources and manage watches. This
 example links a watch to an Inbox external action and an existing capability.
-Set the source kind and external identifiers for your provider.
+Set the source kind and tool for your provider. Use `kind:id` for external IDs.
+The text after the first colon is case-sensitive. Each exact event type has
+its own mapping, with a required `item` and optional `container` and `account`
+kind and field pairs.
 
 ```sh
-autonomatctl signal-sources create --name 'Deployment events' --kind "$SOURCE_KIND" --webhook_mode bearer --json
+autonomatctl signal-sources create --name 'Deployment events' --kind "$SOURCE_KIND" \
+  --webhook_mode bearer \
+  --settings '{"tool":"deploy","event_type_field":"type","message_mapping":{"deployment.updated":{"item":{"kind":"deployment","field":"deployment_id"},"container":{"kind":"project","field":"project_id"},"state":"status","version":"version"}}}' --json
 autonomatctl signal-sources get "$SIGNAL_SOURCE_ID" --json
 autonomatctl signal-sources update "$SIGNAL_SOURCE_ID" --summary 'Deployment events for the pilot'
 autonomatctl watches create --owner_type InboxItem --owner_id "$INBOX_ITEM_ID" \
   --capability_id "$CAPABILITY_ID" --signal_source_id "$SIGNAL_SOURCE_ID" \
-  --tool "$SOURCE_TOOL" --external_id "$EXTERNAL_ID" --condition '{"satisfying_states":["succeeded"],"failing_states":["failed"]}'
+  --tool deploy --external_id 'deployment:Deploy-42' --condition '{"satisfying_states":["succeeded"],"failing_states":["failed"]}'
 autonomatctl watches list --json
 autonomatctl watches get "$WATCH_ID" --json
 autonomatctl watches cancellation create "$WATCH_ID" --description 'Stop watching because the deployment was superseded'
+autonomatctl signals list --q 'owner:"product:42" tool:deploy external_id:"deployment:Deploy-42"' --json
 ```
 
 The delivery command is callable directly. A bearer source uses its webhook
@@ -132,12 +163,13 @@ token and receives the provider message in `data.attributes`.
 
 ```sh
 AUTONOMATCTL_TOKEN="$WEBHOOK_TOKEN" autonomatctl webhooks signal-sources signals create "$SIGNAL_SOURCE_ID" \
-  --body '{"id":"event-42","status":"succeeded"}' --json
+  --body '{"id":"event-42","type":"deployment.updated","deployment_id":"Deploy-42","project_id":"Project-7","status":"succeeded","version":1}' --json
 ```
 
 A signed source receives a plain JSON object. Include a nonblank string or an
-integer in the configured top-level event ID field. Compute the HMAC over the
-exact bytes in `PROVIDER_JSON` using the source's configured digest (SHA256,
+integer in the configured top-level event ID field. Set `PROVIDER_JSON` to the
+same event shape shown above for a signed source with the same mapping. Compute
+the HMAC over the exact bytes in `PROVIDER_JSON` using the configured digest (SHA256,
 SHA384 or SHA512). Encode the HMAC as lowercase hex, prepend any configured
 literal prefix, and pass the result through `AUTONOMATCTL_SIGNAL_SIGNATURE`.
 Set `--signature-header` to the source's configured header. The CLI sends the
