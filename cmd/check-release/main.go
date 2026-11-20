@@ -10,9 +10,13 @@ import (
 )
 
 func run(args []string) int {
-	r := releasecheck.Result{Error: "usage: check-release vTAG BINARY"}
+	r := releasecheck.Result{Error: "usage: check-release {vTAG|--contract-tag} BINARY"}
 	if len(args) == 2 {
-		r = releasecheck.Check(args[0], args[1], schema.Raw())
+		tag := args[0]
+		if tag == "--contract-tag" {
+			tag = "v" + schema.Version()
+		}
+		r = releasecheck.Check(tag, args[1], schema.Raw())
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(r); err != nil {
 		return 1
