@@ -29,6 +29,11 @@ components:
                   items: {$ref: "#/components/schemas/Obj"}
                 tags: {type: array, items: {type: string}}
                 free: {type: object}
+                wrapped:
+                  description: Wrapped object
+                  allOf: [{$ref: "#/components/schemas/Obj"}]
+                scalar: {allOf: [{$ref: "#/components/schemas/Leaf"}]}
+                composed: {allOf: [{$ref: "#/components/schemas/Obj"}, {type: object}]}
     Obj:
       type: object
       x-internal: drop
@@ -105,6 +110,14 @@ func TestTypedQualifiersAndSchemas(t *testing.T) {
 	}
 	if f["tags"].Schema != nil {
 		t.Fatal("string arrays carry no schema")
+	}
+	wrapped := f["wrapped"]
+	if wrapped.Type != "object" || wrapped.Description != "Wrapped object" ||
+		!strings.Contains(string(wrapped.Schema), `"allOf"`) || !strings.Contains(string(wrapped.Schema), `"properties"`) {
+		t.Errorf("wrapped field = %+v, schema = %s", wrapped, wrapped.Schema)
+	}
+	if f["scalar"].Type != "value" || f["composed"].Type != "value" {
+		t.Errorf("scalar and composed field types = %s, %s", f["scalar"].Type, f["composed"].Type)
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(f["obj"].Schema, &obj); err != nil {

@@ -220,6 +220,17 @@ func (l *loader) body(rb *requestBody) (*Body, error) {
 		}
 		if f.Type == "" {
 			f.Type = "value"
+			// Infer the input shape of a single object reference while keeping
+			// the wrapper's description and full schema for discovery.
+			if len(fs.AllOf) == 1 && fs.AllOf[0] != nil && fs.AllOf[0].Ref != "" {
+				target, err := l.resolve(fs.AllOf[0])
+				if err != nil {
+					return nil, fmt.Errorf("attribute %s: %w", name, err)
+				}
+				if target.Type == "object" {
+					f.Type = "object"
+				}
+			}
 		}
 		if fs.Default.Kind != 0 {
 			if err := fs.Default.Decode(&f.Default); err != nil {

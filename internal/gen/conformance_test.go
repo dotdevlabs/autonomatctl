@@ -22,6 +22,14 @@ func sample(name, typ, item string, enum []string) (args []string, want any) {
 		flag = "--" + bf
 	}
 	switch {
+	case name == "external_id" || name == "subject_external_id":
+		return []string{flag, "deployment:Deploy:42"}, "deployment:Deploy:42"
+	case name == "subject_container_external_id":
+		return []string{flag, "project:Project:42"}, "project:Project:42"
+	case name == "subject_account_external_id":
+		return []string{flag, "account:Team:42"}, "account:Team:42"
+	case name == "item_outcome":
+		return []string{flag, `{"state":"completed"}`}, map[string]any{"state": "completed"}
 	case typ == "string" && len(enum) > 0:
 		return []string{flag, enum[0]}, enum[0]
 	case typ == "string":

@@ -135,7 +135,10 @@ func (qi qualInput) term(fs *pflag.FlagSet) (string, bool, error) {
 			return "", false, bad(fmt.Sprintf("%q is not a record id or key", v))
 		}
 	case spec.QualText:
-		if strings.ContainsAny(v, " \t\"") {
+		if qi.Key == "external_id" {
+			// Quote the opaque ID, preserving literal line breaks in q.
+			v = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
+		} else if strings.ContainsAny(v, " \t\"") {
 			v = `"` + strings.ReplaceAll(v, `"`, `\"`) + `"`
 		}
 	}

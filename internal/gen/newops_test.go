@@ -97,6 +97,7 @@ var newOps = []struct {
 	{"createInboxItemEscalation", "inbox-items escalation create", "POST", "/inbox_items/{inbox_item_id}/escalation", "", []string{"reason"}, []string{"reason"}, []string{"i1"}},
 	{"withdrawInboxItem", "inbox-items withdrawal create", "POST", "/inbox_items/{inbox_item_id}/withdrawal", "inbox-items", []string{"description", "reason", "evidence"}, []string{"description", "reason", "evidence"}, []string{"i1"}},
 	{"createRunExecution", "runs create-run-execution", "POST", "/runs/{run_id}/execution", "", nil, nil, []string{"r1"}},
+	{"createRunResult", "runs result create", "POST", "/runs/{run_id}/result", "", []string{"answer"}, []string{"answer", "item_outcome"}, []string{"r1"}},
 	{"listWatches", "watches list", "GET", "/watches", "", nil, nil, nil},
 	{"getWatch", "watches get", "GET", "/watches/{id}", "", nil, nil, []string{"watch1"}},
 	{"createWatch", "watches create", "POST", "/watches", "watches", []string{"owner_type", "owner_id", "capability_id", "tool", "external_id", "condition"}, []string{"owner_type", "owner_id", "capability_id", "signal_source_id", "tool", "external_id", "url", "expires_at", "condition"}, nil},
@@ -160,6 +161,10 @@ func TestNewContractOperations(t *testing.T) {
 			if op.Body != nil {
 				for _, f := range op.Body.Fields {
 					a, v := sample(f.Name, f.Type, f.ItemType, f.Enum)
+					if f.Name == "settings" && (tc.id == "createSignalSource" || tc.id == "updateSignalSource") {
+						const settings = `{"event_type_field":"type","message_mapping":{"deployment.updated":{"item":{"kind":"deployment","field":"deployment.id"},"container":{"kind":"project","field":"project.id"},"account":{"kind":"organization","field":"org.id"},"state":"deployment.state","version":"deployment.version"},"project.created":{"item":{"kind":"project","field":"project.id"}}}}`
+						a, v = []string{"--settings", settings}, decode(t, []byte(settings))
+					}
 					args = append(args, a...)
 					want[f.Name] = v
 				}
@@ -209,6 +214,28 @@ func TestNewContractOperations(t *testing.T) {
 				t.Errorf("attributes = %v, want %v", attrs, want)
 			}
 		})
+	}
+}
+
+func TestSignalsListPreservesTypedExternalID(t *testing.T) {
+	sp := pinnedSpec(t)
+	srv := newStub(t)
+	const query = `owner:"product:42" tool:deploy external_id:"deployment:Deploy:42"`
+	if _, _, err := run(t, sp, srv.URL, "signals", "list", "--q", query); err != nil {
+		t.Fatal(err)
+	}
+	reqs := srv.requests()
+	if len(reqs) != 1 || reqs[0].Query.Get("q") != query {
+		t.Fatalf("requests = %+v, want exact query %q", reqs, query)
+	}
+	id := "deployment:Deploy:42" + `\Path"QA"` + "\nNext"
+	if _, _, err := run(t, sp, srv.URL, "signals", "list", "--q-external_id", id); err != nil {
+		t.Fatal(err)
+	}
+	want := `external_id:"deployment:Deploy:42\\Path\"QA\"` + "\nNext\""
+	reqs = srv.requests()
+	if len(reqs) != 2 || reqs[1].Query.Get("q") != want {
+		t.Fatalf("requests = %+v, want escaped query %q", reqs, want)
 	}
 }
 
