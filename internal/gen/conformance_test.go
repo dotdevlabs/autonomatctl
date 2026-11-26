@@ -30,6 +30,8 @@ func sample(name, typ, item string, enum []string) (args []string, want any) {
 		return []string{flag, "account:Team:42"}, "account:Team:42"
 	case name == "item_outcome":
 		return []string{flag, `{"state":"completed"}`}, map[string]any{"state": "completed"}
+	case name == "standard_keys":
+		return []string{flag, `[]`}, []any{}
 	case typ == "string" && len(enum) > 0:
 		return []string{flag, enum[0]}, enum[0]
 	case typ == "string":

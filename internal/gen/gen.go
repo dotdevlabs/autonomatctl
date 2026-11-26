@@ -420,6 +420,10 @@ func (b *builder) leaf(name string, op spec.Operation) (*cobra.Command, error) {
 				return nil, err
 			}
 			in := input{name: f.Name, flag: flag, kind: kindOf(f.Type, f.ItemType), enum: f.Enum, required: f.Required, typ: f.Type, schema: f.Schema}
+			// The standards contract distinguishes an empty list from omission.
+			if f.Name == "standard_keys" && in.kind == kStrings {
+				in.kind = kJSON
+			}
 			if f.Required && f.HasDefault {
 				in.required, in.sendDef, in.def = false, true, f.Default
 			}

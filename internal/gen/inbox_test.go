@@ -90,16 +90,76 @@ func TestInboxEscalationCreate(t *testing.T) {
 		"--request", `{"action":"enable","target":"pilot","exact_change":"enable one project","duration":"one day","values":{"enabled":true}}`,
 		"--evidence", "Pilot checks passed", "--options", options, "--recommendation", "go",
 		"--prepared_result", "Pilot configuration is ready", "--unblocks", "Limited rollout",
-		"--money_at_stake", `{"amount_minor":1000,"currency":"USD"}`, "--automation_plan", plan)
-	if _, _, err := run(t, sp, srv.URL, args...); err != nil {
-		t.Fatal(err)
+		"--money_at_stake", `{"amount_minor":1000,"currency":"USD"}`)
+	for _, tc := range []struct {
+		name  string
+		extra []string
+		want  map[string]any
+	}{
+		{"permission", []string{"--request_type", "permission", "--automation_plan", plan},
+			map[string]any{"request_type": "permission", "automation_plan": decode(t, []byte(plan))}},
+		{"question", []string{"--request_type", "question", "--work_item_id", "42"},
+			map[string]any{"request_type": "question", "work_item_id": float64(42)}},
+		{"default question", []string{"--work_item_id", `"42"`},
+			map[string]any{"work_item_id": "42"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(srv.requests())
+			if _, _, err := run(t, sp, srv.URL, append(args, tc.extra...)...); err != nil {
+				t.Fatal(err)
+			}
+			reqs := srv.requests()
+			if len(reqs) != before+1 {
+				t.Fatalf("sent %d requests, want 1", len(reqs)-before)
+			}
+			req := reqs[before]
+			if req.Method != "POST" || req.Path != "/inbox_items" || req.ContentType != "application/vnd.api+json" {
+				t.Errorf("unexpected request %s %s (%s)", req.Method, req.Path, req.ContentType)
+			}
+			got := decode(t, req.Body)["data"].(map[string]any)
+			attrs := got["attributes"].(map[string]any)
+			if got["type"] != "inbox-items" || len(attrs) != 10+len(tc.want) ||
+				!reflect.DeepEqual(attrs["options"], decode(t, []byte(`{"options":`+options+`}`))["options"]) {
+				t.Errorf("unexpected create document %v", got)
+			}
+			for _, name := range []string{"request_type", "work_item_id", "automation_plan"} {
+				want, wantPresent := tc.want[name]
+				value, present := attrs[name]
+				if present != wantPresent || !reflect.DeepEqual(value, want) {
+					t.Errorf("%s = %v (present %t), want %v (present %t)", name, value, present, want, wantPresent)
+				}
+			}
+		})
 	}
-	got := decode(t, srv.requests()[0].Body)["data"].(map[string]any)
-	attrs := got["attributes"].(map[string]any)
-	if got["type"] != "inbox-items" || len(attrs) != 11 ||
-		!reflect.DeepEqual(attrs["automation_plan"], decode(t, []byte(plan))) ||
-		!reflect.DeepEqual(attrs["options"], decode(t, []byte(`{"options":`+options+`}`))["options"]) {
-		t.Errorf("unexpected create document %v", got)
+}
+
+func TestWorkItemVerificationCheck(t *testing.T) {
+	sp := pinnedSpec(t)
+	const check = `{"path":"checks[0].status","expected":"ready"}`
+	for _, tc := range []struct {
+		name  string
+		flag  string
+		value string
+		want  map[string]any
+	}{
+		{"save", "--verification_check", check, map[string]any{"verification_check": decode(t, []byte(check))}},
+		{"clear", "--verification_check", "null", map[string]any{"verification_check": nil}},
+		{"omit", "--title", "Updated title", map[string]any{"title": "Updated title"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newStub(t)
+			if _, _, err := run(t, sp, srv.URL, "work-items", "update", "42", tc.flag, tc.value, "--json"); err != nil {
+				t.Fatal(err)
+			}
+			reqs := srv.requests()
+			if len(reqs) != 1 || reqs[0].Method != "PATCH" || reqs[0].Path != "/work_items/42" {
+				t.Fatalf("unexpected requests: %v", reqs)
+			}
+			data := decode(t, reqs[0].Body)["data"].(map[string]any)
+			if !reflect.DeepEqual(data["attributes"], tc.want) {
+				t.Errorf("attributes = %v, want %v", data["attributes"], tc.want)
+			}
+		})
 	}
 }
 
@@ -118,15 +178,15 @@ func TestWorkItemCreateRequiresWorkable(t *testing.T) {
 func TestPendingCallOptionalReferences(t *testing.T) {
 	sp := pinnedSpec(t)
 	srv := newStub(t)
-	for _, extra := range [][]string{nil, {"--title", "Deploy release"}, {"--title", "Deploy release", "--replaces", "42"}} {
-		args := []string{"pending-calls", "create", "--capability", "deploy", "--arguments", `{"subcommand":"deploy"}`, "--reason", "Ship revision"}
+	for _, extra := range [][]string{nil, {"--title", "Deploy release"}, {"--title", "Deploy release", "--replaces", "42"}, {"--title", "Deploy release", "--replaces_entry", "entry-1", "--request_id", "release-2"}} {
+		args := []string{"pending-calls", "create", "--capability", "deploy", "--arguments", `{"subcommand":"deploy"}`, "--reason", "Ship revision", "--consequence", "Deploy the new release"}
 		args = append(args, extra...)
 		if _, stderr, err := run(t, sp, srv.URL, args...); err != nil {
 			t.Fatalf("%v\n%s", err, stderr)
 		}
 		reqs := srv.requests()
 		data := decode(t, reqs[len(reqs)-1].Body)["data"].(map[string]any)
-		want := map[string]any{"capability": "deploy", "arguments": map[string]any{"subcommand": "deploy"}, "reason": "Ship revision"}
+		want := map[string]any{"capability": "deploy", "arguments": map[string]any{"subcommand": "deploy"}, "reason": "Ship revision", "consequence": "Deploy the new release"}
 		for i := 0; i < len(extra); i += 2 {
 			want[strings.TrimPrefix(extra[i], "--")] = extra[i+1]
 		}

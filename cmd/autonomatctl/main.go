@@ -176,7 +176,7 @@ func workflows() []airef.Workflow {
 		},
 		{
 			Name:        "Run as an agent with a run-scoped token",
-			Description: "Read the execution and submit the final result with the target run's token. For a work run, also supply --item_outcome with a JSON object containing the work outcome.",
+			Description: "Read the execution kind and submit the final result with the target run's token. Work and prepare runs require --item_outcome. Verify runs omit it.",
 			Steps: []string{
 				`AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs execution get "$RUN_ID" --json`,
 				`AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs result create "$RUN_ID" --answer 'The review is complete.' --json`,

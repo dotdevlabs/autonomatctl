@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "0.0.21"
+  version: "0.0.35"
   x-version-stage: development
 components:
   securitySchemes:
@@ -205,6 +205,9 @@ components:
           properties:
             operation_id:
               type: string
+            rule:
+              type: string
+              description: Failed work item verification rule.
     ErrorDocument:
       type: object
       additionalProperties: false
@@ -520,6 +523,7 @@ components:
       properties:
         id:
           type: string
+          description: Dependency work item ID for getWorkItem.
         title:
           type: string
         status:
@@ -529,6 +533,7 @@ components:
           nullable: true
         outputs:
           type: array
+          description: Outputs embedded in the dependency's getWorkItem response.
           items:
             type: object
             additionalProperties: false
@@ -563,12 +568,45 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/JsonValue"
+    WorkItemVerificationCheck:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [path, expected]
+      description: Optional structured check. Null clears it. The path supports dot-separated keys and bracketed array indices.
+      properties:
+        path:
+          type: string
+          minLength: 1
+        expected:
+          $ref: "#/components/schemas/JsonValue"
+    WorkItemVerification:
+      type: object
+      additionalProperties: false
+      required: [check, rules]
+      properties:
+        check:
+          $ref: "#/components/schemas/WorkItemVerificationCheck"
+        rules:
+          type: array
+          description: Ordered verification predicates and their refusal codes. The API returns the first failed rule's code in error meta.
+          items:
+            type: object
+            additionalProperties: false
+            required: [condition, code]
+            properties:
+              condition:
+                type: string
+              code:
+                type: string
     WorkItemAttributes:
       type: object
       additionalProperties: false
-      description: New and updated work requires every outcome field. Legacy records may return null until their definition is supplied; evidence is never fabricated during migration.
-      required: [item_type, title, source_kind, status, product_id, workable_type, workable_id, responsible_agent_id, current_state_evidence, desired_outcome, acceptance_criteria, verification, run_count]
+      description: Preparation supplies the complete outcome definition before work starts. Outcome fields can be null while preparation is pending.
+      required: [item_type, title, source_kind, status, product_id, workable_type, workable_id, responsible_agent_id, current_state_evidence, desired_outcome, acceptance_criteria, verification, verification_check, run_count]
       properties:
+        verification_check:
+          $ref: "#/components/schemas/WorkItemVerificationCheck"
         current_state_evidence:
           type: string
           nullable: true
@@ -703,13 +741,16 @@ components:
     WorkItemCreateAttributes:
       type: object
       additionalProperties: false
-      required: [item_type, title, description, product_id, workable_type, workable_id, responsible_agent_id, current_state_evidence, desired_outcome, acceptance_criteria, verification]
+      required: [item_type, title, description, product_id, workable_type, workable_id, responsible_agent_id, current_state_evidence, desired_outcome]
       description: >
         What a work item is created from. A work item belongs to a product and to a workable (an initiative or a
-        refinement): `product_id`, `workable_type` and `workable_id` are all required. `source_kind` and `status`
+        refinement): `product_id`, `workable_type` and `workable_id` are all required. Acceptance criteria
+        and verification can be supplied by the preparation run. `source_kind` and `status`
         are optional for an account token (they default to `api` and `open`); a run token sets only item_type,
-        title, description, body, tags, product_id, the workable, responsible_agent_id and depends_on_ids. Source and status are fixed by the run. Dependencies must be inside its authorized node.
+        title, description, body, tags, product_id, the workable, responsible_agent_id, outcome fields and depends_on_ids. Source and status are fixed by the run. Dependencies must be inside its authorized node.
       properties:
+        verification_check:
+          $ref: "#/components/schemas/WorkItemVerificationCheck"
         current_state_evidence:
           type: string
           minLength: 1
@@ -854,18 +895,13 @@ components:
     InitiativeDocumentAttributes:
       type: object
       additionalProperties: false
-      required: [state, body, accepted, created_at]
+      required: [body, created_at]
       properties:
-        state:
-          type: string
         summary:
           type: string
           nullable: true
         body:
           type: string
-        accepted:
-          type: boolean
-          description: True when this revision is the initiative's accepted one.
         created_at:
           type: string
     InitiativeDocumentResource:
@@ -916,9 +952,9 @@ components:
         description:
           type: string
           minLength: 1
-        accepted_revision_id:
+        current_revision_id:
           type: integer
-          description: Current accepted initiative document revision; required when evidence is supplied.
+          description: Current initiative document revision; required when evidence is supplied.
         output_ids:
           type: array
           items:
@@ -944,8 +980,14 @@ components:
     InitiativeAttributes:
       type: object
       additionalProperties: false
-      required: [key, title, status, automatic_dispatch_paused, created_at, updated_at]
+      required: [key, title, status, automatic_dispatch_paused, created_at, updated_at, current_revision_id, current_text]
       properties:
+        current_revision_id:
+          type: string
+          nullable: true
+        current_text:
+          type: string
+          nullable: true
         external_refs:
           type: array
           items: {$ref: "#/components/schemas/ProductExternalRef"}
@@ -962,6 +1004,7 @@ components:
           description: '"abandoned" is the archived state; archiving never deletes the initiative.'
         automatic_dispatch_paused:
           type: boolean
+          description: Pauses automatic dispatch. An operator's Inbox answer, Inbox approval, or dispatch from the work item's page authorizes that work item and its subsequent runs until closure. The server records the operator and time. API-initiated dispatch does not establish this authorization. A pause refusal creates no Inbox request.
         daily_budget_cents:
           type: integer
           nullable: true
@@ -1175,10 +1218,10 @@ components:
       properties:
         operation:
           type: string
-          description: The configured operation that produced this action's output.
+          description: The configured operation name or the exact operationId mapped to an allowed command of this tool.
         output:
           type: object
-          description: JSON output of a configured tool. Configured external identity and URL paths populate the action reference.
+          description: Canonical structured result for work verification. Report it with the completed action's id, tool_id, operation, status, started_at and finished_at. Configured external identity and URL paths also use this object.
           additionalProperties:
             $ref: "#/components/schemas/JsonValue"
         description:
@@ -1360,9 +1403,8 @@ components:
           type: string
           enum: [completed, interrupted, stopped, failed]
           description: >-
-            These states report execution progress and never verify the desired outcome. The responsible agent
-            must explicitly PATCH its own work item to verified while its authorized run is running, with a
-            description naming the actual versus desired outcome and evidence. Account tokens cannot verify work.
+            A completed work outcome queues a separate verify run after external watches and their deliveries finish.
+            Only that running verify execution can PATCH the item to verified using recorded evidence.
             Supplied invalid objects, unknown states or wrongly typed state/note values return 422 before writes.
         note:
           type: string
@@ -1382,10 +1424,11 @@ components:
     RunDeliveryAttributes:
       type: object
       additionalProperties: false
-      required: [status, description]
+      required: [status]
       allOf:
         - oneOf:
             - type: object
+              required: [description]
               additionalProperties:
                 $ref: "#/components/schemas/JsonValue"
               properties:
@@ -1395,19 +1438,17 @@ components:
             - type: object
               additionalProperties:
                 $ref: "#/components/schemas/JsonValue"
-              required: [summary]
               properties:
                 status:
                   type: string
                   enum: [succeeded, failed, cancelled, finished, completed]
       properties:
         description:
-          $ref: "#/components/schemas/LifecycleDescription"
+          type: string
+          description: Plain-language progress description required when running. Accepted and ignored for terminal results.
         summary:
           type: string
-          minLength: 1
-          pattern: '\S'
-          description: Required for every terminal report. Explain the actual result, including the cause when the run fails.
+          description: Legacy terminal narrative accepted for compatibility. Results use status and failure_reason.
         signal_ids:
           type: array
           description: Explicit signal citations used as evidence in this report. Every fact must be readable by the execution; mere browsing does not create citations.
@@ -1719,7 +1760,7 @@ components:
         summary:
           type: string
           nullable: true
-          description: Required at every terminal outcome; null while unfinished.
+          description: Display text derived from the canonical terminal state and failure cause. Unfinished executions may have no summary.
         usage_notional:
           type: array
           items:
@@ -1732,7 +1773,7 @@ components:
         kind:
           type: string
           nullable: true
-          description: Run kind, including reconcile for bounded node delta reviews using ordinary token and cost accounting.
+          description: Run kind, including prepare and verify for per-item preparation and verification and reconcile for bounded node reviews. These use ordinary token and cost accounting.
         outcome:
           type: string
           nullable: true
@@ -1877,8 +1918,106 @@ components:
     NormalRunExecutionAttributes:
       type: object
       additionalProperties: false
-      required: [account, item, assignment, callback]
+      required: [kind, account, assignment, callback]
+      description: >-
+        Dispatch using kind and the exact resource type.
+        Use an account token for record reads, or a run token with an explicit operation grant
+        and scope covering the record. Embedded context supports execution without additional reads.
+        Use the envelope data.id for getRunExecution, createRunResult and deliverAgentRunResults.
+        Already admitted historical runs with an unavailable subject omit item and mark it in
+        historical_context. Clients must not construct a record URL in that case.
+      not:
+        anyOf:
+          - required: [item, historical_context]
+          - not:
+              anyOf:
+                - required: [item]
+                - required: [historical_context]
+          - required: [item]
+            properties:
+              kind: { enum: [work, verify] }
+              item:
+                not:
+                  required: [work_item_type, verification_check]
+                  properties:
+                    type: { enum: [work-items] }
+          - required: [item]
+            properties:
+              kind: { enum: [prepare] }
+              item:
+                not:
+                  required: [work_item_type]
+                  properties:
+                    type: { enum: [work-items] }
+          - required: [item]
+            properties:
+              kind: { enum: [work, verify] }
+            not:
+              required: [verification]
+          - required: [verification]
+            not:
+              required: [item]
+              properties:
+                kind: { enum: [work, verify] }
+          - required: [item]
+            properties:
+              kind: { enum: [answer] }
+              item:
+                not:
+                  required: [conversation_id]
+                  properties:
+                    type: { enum: [messages] }
+          - required: [item]
+            properties:
+              kind: { enum: [schedule] }
+              item:
+                not:
+                  required: [occurrence]
+                  properties:
+                    type: { enum: [schedules] }
+          - required: [item]
+            properties:
+              kind: { enum: [reconcile] }
+              item:
+                not:
+                  properties:
+                    type: { enum: [products, initiatives] }
+          - required: [item]
+            properties:
+              kind: { enum: [inbox_escalation, approved_call, inbox_assessment] }
+              item:
+                not:
+                  properties:
+                    type: { enum: [inbox-items] }
       properties:
+        kind:
+          type: string
+          enum: [work, prepare, verify, answer, schedule, reconcile, inbox_escalation, approved_call, inbox_assessment]
+          description: >-
+            Work starts from the embedded item, verification and assignment. Use deliverAgentRunResults to
+            record tool actions and report the work outcome.
+            Verify uses the embedded item and the assignment goal, which includes work results and terminal
+            watch observations. Record a granted read and use updateWorkItem with its action ID to verify.
+            If verification cannot pass, supply what remains as the result answer. The item returns to
+            preparation unless the work-run limit has been reached.
+            Prepare uses the embedded work item and assignment goal. Complete the outcome definition,
+            request operator input when needed, and report item_outcome.state as completed when ready.
+            Answer uses embedded conversation context or getConversation followed by listConversationMessages,
+            paging to match the exact message ID. Use createRunResult when granted, then deliverAgentRunResults,
+            which also supports delivering the answer directly.
+            Schedule uses getSchedule and the embedded assignment goal, then deliverAgentRunResults.
+            Reconcile uses getProduct or getInitiative and embedded review context, then createRunResult
+            when granted and deliverAgentRunResults without a work outcome. A refinement review names its owning product.
+            Inbox escalation uses getInboxItem with a scoped, granted run token for agent-addressed
+            items. Account tokens can read operator-addressed Inbox items. Use createInboxItemAnswer
+            or createInboxItemEscalation with a run token for the same item, then deliverAgentRunResults for execution status.
+            Approved call uses getInboxItem or the embedded approved call. Invoke only the approved capability
+            with its supplied arguments, then use deliverAgentRunResults for settlement.
+            Historical Inbox assessment uses getInboxItem and existing deliverAgentRunResults handling.
+        historical_context:
+          type: string
+          enum: [subject_unavailable]
+          description: The historical subject could not be resolved. Any retained prompt context is in assignment.goal.
         conversation:
           $ref: "#/components/schemas/ConversationPayload"
         account:
@@ -1888,29 +2027,42 @@ components:
           properties:
             id:
               type: string
+              description: Account ID for getAccount.
             name:
               type: string
         item:
           type: object
           additionalProperties: false
           required: [id, type, title, status]
-          description: >-
-            A schedule run has `item.type` set to `schedule` and an opaque `item.id` of the form
-            `schedule:{schedule_id}:{schedule_occurrence}`. The occurrence may contain colons.
-            No work item exists for this ID, so no work-item request applies. Use the procedure,
-            node context and prior results in `assignment.goal` and report results using `data.id`.
+          description: API record identity and embedded prompt context.
           properties:
+            current_state_evidence:
+              type: string
+            desired_outcome:
+              type: string
+            acceptance_criteria:
+              type: string
+            verification:
+              type: string
+            verification_check:
+              $ref: "#/components/schemas/WorkItemVerificationCheck"
             id:
               type: string
-              description: >-
-                For a schedule run, an opaque occurrence identifier of the form
-                `schedule:{schedule_id}:{schedule_occurrence}`. The occurrence may contain colons.
-                This is not a work item ID. Use the execution document's `data.id` to report results.
+              pattern: '^[1-9][0-9]*$'
             type:
               type: string
-              description: >-
-                "answer" for an answer run (a reply to a conversation message; id is the execution id,
-                not a work item id). Work runs carry the work item type. Schedule runs carry "schedule".
+              enum: [work-items, messages, schedules, products, initiatives, inbox-items]
+            conversation_id:
+              type: string
+              pattern: '^[1-9][0-9]*$'
+              description: Parent of the source message, used with getConversation and listConversationMessages.
+            occurrence:
+              type: string
+              nullable: true
+              description: Captured schedule occurrence, preserved verbatim including colons. Null for admitted historical schedules without a stored occurrence.
+            work_item_type:
+              type: string
+              description: Work item classification.
             title:
               type: string
             body:
@@ -1932,6 +2084,8 @@ components:
                 ref, title, status, final outcome and outputs.
               items:
                 $ref: "#/components/schemas/RunDependency"
+        verification:
+          $ref: "#/components/schemas/WorkItemVerification"
         assignment:
           type: object
           additionalProperties: false
@@ -1958,6 +2112,7 @@ components:
               type: string
             granted_tools:
               type: array
+              description: Capability IDs for getCapability.
               items:
                 type: string
             rules:
@@ -2011,11 +2166,19 @@ components:
                     $ref: "#/components/schemas/BudgetLimit"
         tool_definitions:
           type: array
+          description: Tool definitions keyed by capability ID, which resolves through getCapability.
           items:
             type: object
             additionalProperties: false
             required: [id, name, description, interface, command, allowed_commands, invocation, input_schema, credential_mapping, creates_watch, external_id_path, external_url_path, read_operation, states, signal_source_id, cost_path]
             properties:
+              operation_input_schemas:
+                type: object
+                description: OpenAPI input schemas for granted operations, keyed by operationId. Each schema includes its referenced components.
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/JsonValue"
               credential_mapping:
                 $ref: "#/components/schemas/ToolCredentialMapping"
               creates_watch:
@@ -2031,7 +2194,8 @@ components:
               states:
                 $ref: "#/components/schemas/ToolStates"
               signal_source_id:
-                type: integer
+                type: string
+                description: Signal source ID for getSignalSource.
                 nullable: true
               cost_path:
                 $ref: "#/components/schemas/ToolCostPath"
@@ -2165,7 +2329,8 @@ components:
                 type: boolean
                 description: >-
                   True when a policy (`requires: approval`) gates calls of this tool. The agent must not run a gated
-                  call; it submits the exact call with `POST /pending_calls` (operationId `createPendingCall`) and
+                  call; it submits the exact call with `POST /pending_calls` (operationId `createPendingCall`), names
+                  the action in plain language and explains what happens upon approval. The calls are grouped by work and
                   an operator decides in the Inbox. A refinement or initiative reuses its approved workable
                   permission grant: covered actions are not gated again. Always false in an `approved_call` run.
               governing_policy:
@@ -2188,7 +2353,7 @@ components:
           properties:
             inbox_item_id:
               type: string
-              description: The approved Inbox item (a call is executed at most once per item).
+              description: Inbox item ID for getInboxItem. The worker receives the exact saved call for this execution.
             capability:
               type: string
               description: The capability key to call.
@@ -2208,8 +2373,8 @@ components:
             `expires_at` or when the run reaches a terminal state, whichever is first. The run may call only
             its own model credential refresh operation, or the operations a capability granted to its role lists by operationId (for example the allowed
             subcommands of a CLI capability), and only on records inside its node. A denied request
-            returns 403 naming the operation. Each fetch of this document issues a new token and revokes the
-            earlier one. Absent for a run that is already terminal. The token lives for the role's `run_timeout`
+            returns 403 naming the operation. Rereads and successful replays preserve the current token.
+            Absent for a run that is already terminal. The token lives for the role's `run_timeout`
             plus a fixed margin (`RUN_TOKEN_MARGIN_MINUTES`, default 15 minutes); a run without a role uses
             the default timeout (7200 seconds).
           properties:
@@ -2232,6 +2397,7 @@ components:
             properties:
               inbox_item_id:
                 type: string
+                description: Source Inbox item ID for getInboxItem.
               label:
                 type: string
               type:
@@ -2326,8 +2492,11 @@ components:
     RunInboxResolutionAttributes:
       type: object
       additionalProperties: false
-      required: [inbox_item_id, outcome, evidence, execution_id]
+      required: [inbox_item_id, outcome, evidence, execution_id, covered_entry_ids]
       properties:
+        covered_entry_ids:
+          type: array
+          items: {type: string}
         inbox_item_id:
           type: integer
         outcome:
@@ -2401,7 +2570,7 @@ components:
     PendingCallCreateAttributes:
       type: object
       additionalProperties: false
-      required: [capability, arguments, reason]
+      required: [capability, arguments, reason, consequence]
       properties:
         capability:
           type: string
@@ -2413,10 +2582,19 @@ components:
             $ref: "#/components/schemas/JsonValue"
         title:
           type: string
-          description: Nonblank one-line action title, required when operation metadata is unavailable. Surrounding whitespace is trimmed; embedded line separators are rejected. A missing title returns a 422 JSON:API error stating that title is required when operation metadata is unavailable. Metadata-derived titles remain authoritative even when a title is supplied.
+          description: One-line agent-authored action, required for work-bound calls and when operation metadata is unavailable. Surrounding whitespace is trimmed and embedded line separators return 422.
         replaces:
           type: string
-          description: Optional pending approval call Inbox item ID in the same account and work item (including an earlier execution), or the same execution with no work item on either item. Creation and system completion of the old item are atomic; its resolution links the replacement. The old call and history are retained and neither call is dispatched. Nonexistent, malformed, resolved, non-call, non-approval or differently owned references return 422. Explicit replacement creates a fresh pending item even for unchanged arguments; ordinary submissions retain deduplication excluding superseded items.
+          description: Legacy replacement item ID. For work-bound calls the item must identify exactly one open saved call in the same work item.
+        replaces_entry:
+          type: string
+          description: Replace this open saved-call entry in the same work item. Retirement and append are atomic and preserve both requests.
+        request_id:
+          type: string
+          description: Identifies an intentional repeat of an identical work-bound call. Repeating a submission with the same identity returns the same entry.
+        consequence:
+          type: string
+          description: Required plain-language description of what happens upon approval.
         reason:
           type: string
           description: Plain-language explanation of why the call is needed. This supplies the initial Inbox transition description for a saved-call request. Blank text, bare states and reason codes return 422.
@@ -2431,6 +2609,9 @@ components:
       properties:
         inbox_item_id:
           type: integer
+        entry_id:
+          type: string
+          description: The submitted approval entry for a work-bound call.
         status:
           type: string
           description: The latest Inbox transition state, open until an operator decides,
@@ -2440,7 +2621,8 @@ components:
           description: The saved-call capability.
         governing_policy:
           type: string
-          description: The saved-call policy key.
+          nullable: true
+          description: The policy key when a governing policy requires approval.
     PendingCallDocument:
       type: object
       additionalProperties: false
@@ -2546,16 +2728,21 @@ components:
     RunRevisionAttributes:
       type: object
       additionalProperties: false
-      required: [revision_number, state, summary]
+      required: [revision_number, summary, agent_role_id, execution_id, body, created_at]
       properties:
+        agent_role_id:
+          type: string
+        execution_id:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
         revision_number:
           type: integer
           description: Numbered on creation, 1 for the first revision of the document.
-        state:
-          type: string
         summary:
           type: string
-          nullable: true
         document_id:
           type: integer
           description: Present on product document revisions only.
@@ -2597,7 +2784,7 @@ components:
             attributes:
               type: object
               additionalProperties: false
-              required: [body]
+              required: [body, summary]
               properties:
                 body:
                   type: string
@@ -2619,7 +2806,7 @@ components:
             attributes:
               type: object
               additionalProperties: false
-              required: [kind, body]
+              required: [kind, body, summary]
               properties:
                 kind:
                   type: string
@@ -2628,28 +2815,13 @@ components:
                   type: string
                 summary:
                   type: string
-    StandardRevisionSummary:
-      type: object
-      additionalProperties: false
-      nullable: true
-      required: [id, revision_number, state, summary, body]
-      properties:
-        id:
-          type: string
-        revision_number:
-          type: integer
-        state:
-          type: string
-        summary:
-          type: string
-          nullable: true
-        body:
-          type: string
     StandardAttributes:
       type: object
       additionalProperties: false
-      required: [key, kind, level, status, scope, created_on, applies_when, verification, supersedes_id, superseded_by_id, accepted_revision_id, accepted_revision, created_at, updated_at]
+      required: [key, kind, level, status, scope, created_on, applies_when, verification, supersedes_id, superseded_by_id, current_revision_id, current_text, created_at, updated_at, standard_keys]
       properties:
+        standard_keys:
+          $ref: "#/components/schemas/ProcedureStandardKeys"
         key:
           type: string
         kind:
@@ -2678,11 +2850,12 @@ components:
         superseded_by_id:
           type: string
           nullable: true
-        accepted_revision_id:
+        current_revision_id:
           type: string
           nullable: true
-        accepted_revision:
-          $ref: "#/components/schemas/StandardRevisionSummary"
+        current_text:
+          type: string
+          nullable: true
         created_at:
           type: string
         updated_at:
@@ -2724,13 +2897,17 @@ components:
     StandardRevisionAttributes:
       type: object
       additionalProperties: false
-      required: [revision_number, state, summary, body, evidence_links_count, author_id, reviewed_by_id, reviewed_at, created_at]
+      required: [revision_number, summary, body, evidence_links_count, author_id, reviewed_by_id, created_at, agent_role_id, execution_id]
       properties:
+        agent_role_id:
+          type: string
+          nullable: true
+        execution_id:
+          type: string
+          nullable: true
         revision_number:
           type: integer
-        state:
-          type: string
-          enum: [proposed, accepted, rejected]
+          nullable: true
         summary:
           type: string
           nullable: true
@@ -2742,9 +2919,6 @@ components:
           type: string
           nullable: true
         reviewed_by_id:
-          type: string
-          nullable: true
-        reviewed_at:
           type: string
           nullable: true
         created_at:
@@ -2928,12 +3102,21 @@ components:
               enum: [policies]
             attributes:
               $ref: "#/components/schemas/PolicyCreateAttributes"
+    ProcedureStandardKeys:
+      type: array
+      uniqueItems: true
+      description: Ordered keys of existing standards in the same account. A procedure cannot list itself. Only active references appear in new goals. Decisions accept only an empty list.
+      items:
+        type: string
+        minLength: 1
     StandardCreateAttributes:
       type: object
       additionalProperties: false
       required: [key, kind, level]
-      description: "`body` and `summary` file a proposed revision of the new standard, which is accepted with `createStandardRevisionApplication`."
+      description: "A body and summary request an initial revision using run authority or Inbox approval. Omitting standard_keys creates an empty list."
       properties:
+        standard_keys:
+          $ref: "#/components/schemas/ProcedureStandardKeys"
         key:
           type: string
         kind:
@@ -2978,6 +3161,27 @@ components:
               enum: [standards]
             attributes:
               $ref: "#/components/schemas/StandardCreateAttributes"
+    StandardUpdateDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [attributes]
+          properties:
+            type:
+              type: string
+              enum: [standards]
+            id:
+              type: string
+            attributes:
+              type: object
+              additionalProperties: false
+              properties:
+                standard_keys:
+                  $ref: "#/components/schemas/ProcedureStandardKeys"
     ScheduleCreateAttributes:
       type: object
       additionalProperties: false
@@ -3481,12 +3685,20 @@ components:
         kinds:
           type: object
           additionalProperties: {type: string, enum: [global, account, project, item]}
+    ToolApprovalTemplates:
+      type: object
+      description: Plain-text Mustache templates keyed by contract operation ID or a configured CLI subcommand. Variables are redacted named call arguments. Without a usable template, CLI approvals show named argument rows.
+      additionalProperties:
+        type: string
+        minLength: 1
     CapabilityResponseAttributes:
       type: object
       additionalProperties: false
       required: [key, description, interface, command, allowed_commands, invocation, credential_mapping, creates_watch, external_id_path, external_url_path, read_operation, states, signal_source_id, cost_path, inputs, created_at, updated_at]
       description: Complete configured tool metadata without resolved credentials.
       properties:
+        approval_templates:
+          $ref: "#/components/schemas/ToolApprovalTemplates"
         watch_configuration:
           $ref: "#/components/schemas/ToolWatchConfiguration"
         interface:
@@ -3560,6 +3772,8 @@ components:
       required:
       - key
       properties:
+        approval_templates:
+          $ref: "#/components/schemas/ToolApprovalTemplates"
         watch_configuration:
           $ref: "#/components/schemas/ToolWatchConfiguration"
         credential_mapping:
@@ -4176,15 +4390,43 @@ components:
               - prepared_result
               - unblocks
               - money_at_stake
-              - automation_plan
-              description: 'One validated escalation from the authenticated asking agent
-                to its reporting agent. Only CEO escalations reach the operator. Every
-                field and nested required value must be non-empty; narratives must differ.
-                Missing fields return 422 with named field paths. At most one open escalation
-                exists for the same record and normalized subject.
-
-                '
+              description: >
+                One work-item request from the authenticated agent. Work runs may omit
+                work_item_id to use their own work item. Review runs must name a work item
+                inside their account and node. Questions use options without executable calls.
+                Explicit permission requests require a bounded automation plan.
+              oneOf:
+              - type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
+                required: [request_type, automation_plan]
+                properties:
+                  request_type: {type: string, enum: [permission]}
+              - type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
+                properties:
+                  request_type: {type: string, enum: [question]}
+                  options:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties:
+                        $ref: "#/components/schemas/JsonValue"
+                      not:
+                        required: [call]
+                not:
+                  required: [automation_plan]
               properties:
+                request_type:
+                  type: string
+                  enum: [question, permission]
+                  default: question
+                work_item_id:
+                  description: Explicit work item reference in the authenticated execution's account and node.
+                  oneOf:
+                  - {type: integer, minimum: 1, example: 42}
+                  - {type: string, pattern: '^[1-9][0-9]*$', example: '42'}
                 subject:
                   type: string
                   pattern: "^[^\\r\\n]+\\?$"
@@ -4305,6 +4547,12 @@ components:
       additionalProperties: false
     InboxAutomationPlan:
       type: object
+      description: |
+        The action is the immutable key of an installation-level InboxRequestKind record. The
+        definition controls the allowed account-scoped targets, node and scope checks, bound,
+        and effect of approval. Unknown or unavailable definitions return 422 at
+        /data/attributes/automation_plan.action with the missing key when submitting or approving
+        a request. Existing request history remains readable and pending requests can be denied.
       required:
       - action
       - target
@@ -4313,12 +4561,7 @@ components:
       properties:
         action:
           type: string
-          enum:
-          - grant
-          - policy
-          - budget
-          - schedule
-          - tool
+          description: Stored InboxRequestKind key. A work-scoped approval requires the current exact authority envelope.
         target:
           type: string
           description: Account-scoped record identity, such as Product:123 or Capability:456.
@@ -4345,10 +4588,46 @@ components:
             uses:
               type: integer
               minimum: 1
-          description: Budget plans require positive Money in limit; other plans require
-            positive uses.
+          description: The definition selects positive account-currency minor units in limit or a positive counted bound in uses.
           additionalProperties: false
       additionalProperties: false
+    InboxRequestKind:
+      type: object
+      additionalProperties: false
+      required: [key, label, rules]
+      description: |
+        Trusted installation data. New installations seed the six established definitions.
+        Deploying the schema to an installed system inserts no definitions. After deploy, a
+        trusted operator explicitly loads the definitions with db:seed or creates validated
+        InboxRequestKind records through operator maintenance. Seeding preserves existing rows.
+        The catalog has no agent or ordinary request write API. Published keys and rules are immutable.
+      properties:
+        key: {type: string, pattern: '^[a-z][a-z0-9_-]{0,254}$'}
+        label: {type: string, description: Public review label.}
+        rules:
+          type: object
+          additionalProperties: false
+          required: [targets, bound, scope, approval]
+          properties:
+            targets: {type: array, items: {type: string, enum: [Account, Product, Initiative, Policy, Schedule, Capability]}}
+            node_targets: {type: array, items: {type: string, enum: [Product, Initiative]}}
+            bound: {type: string, enum: [counted, minor_units]}
+            scope: {type: string, enum: [open_fields, capability_identity, work_envelope]}
+            approval: {type: string, enum: [bounded_authority, record_decision]}
+            consumers: {type: array, items: {type: string, enum: [policy_envelope, spend_allowance, capability_envelope, inbox_count]}}
+            native: {type: string, enum: [role_capability, node_spend]}
+            request_binding: {type: string, description: Required request value matched by the scope.}
+            intents: {type: array, items: {type: string}}
+            max_uses: {type: integer, minimum: 1}
+            max_seconds: {type: integer, minimum: 1}
+            readiness:
+              type: object
+              additionalProperties: false
+              description: Optional order for participating readiness checks after dependency and pause checks. Intrinsic checks have default positions when there is no definition.
+              properties:
+                approval_authority: {type: integer, minimum: 21, maximum: 99}
+                spend_allowance: {type: integer, minimum: 21, maximum: 99}
+                required_template: {type: integer, minimum: 21, maximum: 99}
     InboxRequirementsAttributes:
       type: object
       additionalProperties: false
@@ -4405,6 +4684,9 @@ components:
       additionalProperties: false
       required: [id, outcome, state, value, user_id, execution_id, created_at]
       properties:
+        covered_entry_ids:
+          type: array
+          items: {type: string}
         id:
           type: string
         outcome:
@@ -4434,6 +4716,9 @@ components:
       additionalProperties: false
       required: [id, outcome, state, value, user_id, execution_id, created_at]
       properties:
+        covered_entry_ids:
+          type: array
+          items: {type: string}
         id:
           type: string
         outcome:
@@ -4458,6 +4743,93 @@ components:
         created_at:
           type: string
           format: date-time
+    InboxApprovalArgument:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name: {type: string, description: Display name of the argument or permission field.}
+        value: {type: string, description: Display text that preserves line breaks.}
+    InboxApprovalDiffLine:
+      type: object
+      additionalProperties: false
+      required: [kind, text]
+      properties:
+        kind: {type: string, enum: [unchanged, added, removed]}
+        text: {type: string, description: Text of the saved revision line without a diff marker.}
+    InboxApprovalQuestionConsequence:
+      type: object
+      additionalProperties: false
+      properties:
+        continues: {type: string}
+        spent: {type: string}
+        not_done: {type: string}
+    InboxApprovalQuestionOption:
+      type: object
+      additionalProperties: false
+      properties:
+        key: {type: string, description: Option reference to send when answering the question.}
+        label: {type: string}
+        consequence:
+          $ref: "#/components/schemas/InboxApprovalQuestionConsequence"
+        value_request:
+          $ref: "#/components/schemas/InboxValueRequest"
+    InboxApprovalQuestion:
+      type: object
+      additionalProperties: false
+      properties:
+        evidence: {type: string, description: Context supplied for the question.}
+        unblocks: {type: string, description: What answering the question unblocks.}
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/InboxApprovalQuestionOption"
+    InboxApprovalDetail:
+      type: object
+      description: Operator-facing details for a saved call, permission request, or question. Only fields that apply to the entry are returned.
+      additionalProperties: false
+      properties:
+        kind_label: {type: string, description: The public label of the stored request kind when available.}
+        target: {type: string, description: Human-readable name of the target.}
+        summary: {type: string, description: Rendered approval template summary when available.}
+        arguments:
+          type: array
+          description: Named argument or permission fields with readable values. Sensitive arguments and internal permission metadata are omitted.
+          items:
+            $ref: "#/components/schemas/InboxApprovalArgument"
+        diff:
+          type: array
+          description: Ordered diff from the saved current and requested document text.
+          items:
+            $ref: "#/components/schemas/InboxApprovalDiffLine"
+        question:
+          $ref: "#/components/schemas/InboxApprovalQuestion"
+    InboxApprovalCallResult:
+      type: object
+      description: Displayable outcome of the approved call when a result is available.
+      additionalProperties: false
+      properties:
+        state: {type: string}
+        outcome: {type: string}
+        failure_reason: {type: string}
+    InboxApprovalEntry:
+      type: object
+      additionalProperties: false
+      required: [id, request_type, detail]
+      properties:
+        id: {type: string}
+        request_type: {type: string}
+        action: {type: string}
+        reason: {type: string}
+        consequence:
+          type: string
+          description: What approval permits. Older explanations with unverified provenance appear as the reason.
+        detail:
+          $ref: "#/components/schemas/InboxApprovalDetail"
+        answer_id: {type: string}
+        retired_at: {type: string, format: date-time}
+        call_result:
+          $ref: "#/components/schemas/InboxApprovalCallResult"
     InboxItemAttributes:
       type: object
       additionalProperties: false
@@ -4499,6 +4871,29 @@ components:
       - recipient_agent_id
       - answer
       properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/InboxApprovalEntry"
+        work_context:
+          type: object
+          nullable: true
+          additionalProperties: false
+          properties:
+            id: {type: string}
+            title: {type: string}
+            outcome: {type: string}
+            evidence: {type: string}
+            next_action: {type: string}
+            wait:
+              type: object
+              additionalProperties: false
+              properties:
+                description: {type: string}
+                reason: {type: string}
+                actor_type: {type: string}
+                actor_id: {type: integer}
+                actor_name: {type: string}
         escalation:
           type: object
           additionalProperties:
@@ -5126,7 +5521,7 @@ components:
     ProductResourceAttributes:
       type: object
       additionalProperties: false
-      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, external_refs, parent_id, created_at, updated_at]
+      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, excluded_standard_keys, external_refs, parent_id, created_at, updated_at]
       properties:
         owner_agent_id:
           type: string
@@ -5172,6 +5567,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KeyMetric"
+        excluded_standard_keys:
+          $ref: "#/components/schemas/ProductExcludedStandardKeys"
         external_refs:
           type: array
           items:
@@ -5183,6 +5580,13 @@ components:
           type: string
         updated_at:
           type: string
+    ProductExcludedStandardKeys:
+      type: array
+      uniqueItems: true
+      description: Account standard keys excluded from runs for this product or its work items. New products start with an empty list.
+      items:
+        type: string
+        pattern: '\S'
     ProductResource:
       type: object
       additionalProperties: false
@@ -5240,6 +5644,10 @@ components:
           description: Replaces the product's key metrics.
           items:
             $ref: "#/components/schemas/KeyMetric"
+        excluded_standard_keys:
+          description: Replaces the entire list. Each key must exist in the product's account. Send an empty array to clear it or omit the attribute to preserve it.
+          allOf:
+            - $ref: "#/components/schemas/ProductExcludedStandardKeys"
         external_refs:
           type: array
           description: Replaces the product's external references. Each entry has tool, kind and ref as non-blank strings and optionally url and label.
@@ -5301,17 +5709,60 @@ components:
               type: string
             attributes:
               $ref: "#/components/schemas/ProductUpdateAttributes"
+    ArchitectureDecisionDocument:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [type, id, links, attributes]
+          properties:
+            type:
+              type: string
+              enum: [architecture-decisions]
+            id:
+              type: string
+            links:
+              $ref: "#/components/schemas/ResourceLinks"
+            attributes:
+              type: object
+              additionalProperties: false
+              required: [key, title, initiative_id, current_revision_id, current_text, created_at, updated_at]
+              properties:
+                key:
+                  type: string
+                title:
+                  type: string
+                initiative_id:
+                  type: string
+                  nullable: true
+                current_revision_id:
+                  type: string
+                  nullable: true
+                current_text:
+                  type: string
+                  nullable: true
+                created_at:
+                  type: string
+                updated_at:
+                  type: string
     DocumentRevisionResourceAttributes:
       type: object
       additionalProperties: false
-      required: [revision_number, state, summary, body, evidence_links_count, author_id, reviewed_by_id, reviewed_at, created_at, updated_at]
+      required: [revision_number, summary, body, evidence_links_count, author_id, reviewed_by_id, created_at, updated_at, agent_role_id, execution_id]
       properties:
+        agent_role_id:
+          type: string
+          nullable: true
+        execution_id:
+          type: string
+          nullable: true
         revision_number:
           type: integer
+          nullable: true
           description: Numbered on creation, 1 for the first revision of the document.
-        state:
-          type: string
-          enum: [proposed, accepted, rejected]
         summary:
           type: string
           nullable: true
@@ -5323,9 +5774,6 @@ components:
           type: string
           nullable: true
         reviewed_by_id:
-          type: string
-          nullable: true
-        reviewed_at:
           type: string
           nullable: true
         created_at:
@@ -5377,59 +5825,24 @@ components:
           type: integer
         currency:
           type: string
-    AcceptedRevision:
-      type: object
-      nullable: true
-      additionalProperties: false
-      description: The accepted revision of a document, embedded with its own link; null while none is accepted.
-      required: [id, links, revision_number, state, summary, body, evidence_links_count, author_id, reviewed_by_id, reviewed_at, created_at, updated_at]
-      properties:
-        id:
-          type: string
-        links:
-          $ref: "#/components/schemas/ResourceLinks"
-        revision_number:
-          type: integer
-          description: Numbered on creation, 1 for the first revision of the document.
-        state:
-          type: string
-          enum: [proposed, accepted, rejected]
-        summary:
-          type: string
-          nullable: true
-        body:
-          type: string
-        evidence_links_count:
-          type: integer
-        author_id:
-          type: string
-          nullable: true
-        reviewed_by_id:
-          type: string
-          nullable: true
-        reviewed_at:
-          type: string
-          description: Set when the revision was accepted.
-        created_at:
-          type: string
-        updated_at:
-          type: string
     ProductDocumentResourceAttributes:
       type: object
       additionalProperties: false
-      required: [kind, kind_label, review_state, product_id, accepted_revision, created_at, updated_at]
+      required: [kind, kind_label, product_id, current_revision_id, current_text, created_at, updated_at]
       properties:
         kind:
           type: string
         kind_label:
           type: string
-        review_state:
-          type: string
-          enum: [missing, needs_review, accepted, draft]
         product_id:
           type: string
-        accepted_revision:
-          $ref: "#/components/schemas/AcceptedRevision"
+          nullable: true
+        current_revision_id:
+          type: string
+          nullable: true
+        current_text:
+          type: string
+          nullable: true
         created_at:
           type: string
         updated_at:
@@ -5994,8 +6407,13 @@ components:
       required:
       - model_credential
       - callback
+      - kind
       additionalProperties: false
       properties:
+        kind:
+          type: string
+          enum: [credential_check]
+          description: Verify the supplied model credential and report through deliverAgentRunResults using data.id.
         model_credential:
           "$ref": "#/components/schemas/ApiModelCredentialPayload"
         callback:
@@ -6677,9 +7095,13 @@ paths:
       summary: Update a work item's title, status, owner and next action
       operationId: updateWorkItem
       description: >-
-        Required narrative fields cannot be emptied. Only an authenticated authorized running execution
-        belonging to this work item and account may transition it to verified, with a description naming
-        the verification evidence. Ordinary completed run reports and external observations never verify it.
+        Required narrative fields cannot be emptied. Only an authenticated running verify execution
+        belonging to this work item and account may transition it to verified. Supply a plain-language
+        description and observation_action_id from the run's recorded actions. The API requires a check
+        already saved on the item and a successful granted read after the run's last change. The path
+        must exist in the action's structured output and its JSON value must equal the expected value.
+        Save check changes separately. A failed rule returns 422 with its identifier in errors[].meta.rule.
+        An ineligible execution receives verify_run_required.
         Failed and cancelled are terminal states and do not count as done. Clients cannot set in_progress;
         admission alone enters that state and queues an execution. A waiting transition requires a cause and
         files one manager escalation when human action is needed.
@@ -6727,6 +7149,12 @@ paths:
                         verification:
                           type: string
                           minLength: 1
+                        verification_check:
+                          $ref: "#/components/schemas/WorkItemVerificationCheck"
+                        observation_action_id:
+                          type: string
+                          minLength: 1
+                          description: Worker-supplied action ID. Used only when transitioning to verified.
                         title:
                           type: string
                         status:
@@ -7567,6 +7995,7 @@ paths:
   /work_items/{work_item_id}/executions:
     post:
       summary: Create an execution for a work item
+      description: Selects pending verification once external watches and deliveries finish, or starts preparation when the work item is unprepared. Subsequent work uses any existing work-item authorization under an initiative pause. An API request cannot establish operator authorization.
       operationId: createExecution
       security:
         - apiToken: []
@@ -7608,7 +8037,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
-          description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
+          description: Invalid JSON:API request or execution refused, including work without operator authorization under a paused initiative.
           content:
             application/vnd.api+json:
               schema:
@@ -7740,13 +8169,15 @@ paths:
     post:
       summary: File a validated escalation to the asking agent's manager
       description: >
-        Requires an authenticated agent execution and every field in InboxItemCreateDocument.
-        The subject must be a one-line question. The server derives the asking agent and recipient,
-        validates the reporting chain and permits only one open item per record and normalized question.
-        Missing or blank fields return 422 with their field paths. Options include structured consequences;
-        recommendations name an option. Money may be zero. Automation plans carry typed, bounded authority.
-        Recipient agents answer within their tools, grants and budget or escalate the same item with a reason.
-        Only CEO escalations reach the operator. Saved calls retain exact original arguments.
+        Requires an authenticated agent execution and a work item. An explicit work_item_id must be
+        in the execution's account and node. With no explicit reference, the execution's own work
+        item is used. The server derives the asking agent and recipient and validates the reporting chain.
+        Questions are the default and forbid automation plans and executable option calls.
+        Explicit permission requests require a typed, bounded automation plan. Recipient agents
+        escalate questions with a reason. Work-item questions reaching the operator appear alongside
+        approvals in the work item's Inbox. An answer supplies the selected option and any typed value
+        to that work item's next admitted execution. An operator's answer or approval allows that work
+        item to continue under an initiative pause until closure. The server records the operator and time.
       operationId: createInboxItem
       x-model: InboxItem
       security:
@@ -7778,8 +8209,9 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: >
-            A required part is missing or blank (one error per part), an option or the recommendation is
-            invalid, the category is unknown or the cause_key is taken
+            Named field errors for missing or invalid request details, a missing or out-of-scope
+            work_item_id, an invalid option or recommendation, or a plan supplied with a question.
+            An unavailable stored request kind is named in the error at automation_plan.action.
           content:
             application/vnd.api+json:
               schema:
@@ -8527,6 +8959,13 @@ paths:
   "/inbox_items/{inbox_item_id}/answer":
     post:
       summary: Answer an assigned escalation within the agent envelope
+      description: >-
+        A run can answer its assigned escalation within its existing authority. A run's answer does
+        not authorize dispatch under an initiative pause. Grouped work approvals
+        require the operator's Inbox form, which submits the reviewed entry IDs and rejects changed
+        membership. Approval revalidates the stored kind and its scope, including when no grant
+        will be created. A missing definition permits denial and historical display.
+        The Inbox read API reports the covered IDs with each recorded answer.
       operationId: createInboxItemAnswer
       security:
       - apiToken: []
@@ -8586,8 +9025,8 @@ paths:
               schema:
                 "$ref": "#/components/schemas/InboxItemDocument"
         '422':
-          description: Missing input, invalid plan, closed escalation or insufficient
-            answering authority
+          description: Missing input, invalid plan, closed escalation, insufficient answering authority,
+            or a missing stored definition named at automation_plan.action.
           content:
             application/vnd.api+json:
               schema:
@@ -8684,25 +9123,18 @@ paths:
     post:
       summary: Submit a tool call for operator approval instead of running it (run token)
       description: >-
-        For refinement and initiative work, returns the workable permission request. The initial request covers
-        every matching dispatch policy and governed operation of all current work roles. Approval covers all work
-        items until the workable ends. An uncovered action shares one pending extension under that same grant;
-        covered actions reuse approved permission without new Inbox items. Arguments are retained in the run's
-        permission-request audit, and actual tool results retain their normal execution audit. Grant approval
-        resumes eligible work; it does not replay every submitted call. Workable requests do not accept replaces.
-        Approval content is a title, action lines, the workable goal and the decline consequence.
-        For other runs, files a pending approval Inbox item that holds the governing policy, the exact call (capability and
-        arguments), the run and its node. Nothing runs. Approving the item dispatches one new execution of kind
-        `approved_call` that performs exactly this call and records the result on the item; denying it never runs
-        the call. Authorized by the capability named in the body: it must be granted to the run. Submitting the
-        same call twice returns the same item unless it has been superseded. Calls without operation metadata
-        require a one-line action `title`; metadata-derived titles remain unchanged. Optional `replaces` identifies
-        a pending approval call from the same work item, or the same execution when there is no work item.
-        In one transaction a fresh pending item is created and the old item is completed by the system with
-        a resolution linking the replacement, retaining the old call and history without dispatching either call.
-        Replacement creates a fresh item even when the arguments are unchanged. Both items must belong to the
-        same account; resolved, non-call, non-approval or differently owned targets are rejected. Invalid titles
-        or replacement references return 422 JSON:API errors.
+        Saves the capability, exact arguments, and originating run for operator approval. The capability
+        must be granted to the run. Every approval submission requires a plain-language `consequence` stating
+        what happens upon approval and a separate `reason` explaining why the call is needed. For a work-bound
+        run, also supply a plain-language action `title`. The response identifies the work item's Inbox item
+        and the submitted entry. A repeated submission reuses the entry. A new request reopens the same
+        Inbox item after resolution. Use `request_id` for intentionally repeated identical calls and
+        `replaces_entry` to retire one open call and append its replacement atomically. The operator's answer
+        covers the reviewed open entry IDs. Changed membership requires a fresh review. Approval admits
+        one execution per saved call with its original arguments. Denial admits none. Standalone calls retain
+        a separate Inbox item and may use `replaces` for an open call from the same execution. A missing, null,
+        blank, or otherwise invalid `consequence` returns a 422 JSON:API error pointing to that field. Invalid
+        titles and replacement references also return 422 JSON:API errors.
       operationId: createPendingCall
       security:
         - apiToken: []
@@ -8743,7 +9175,12 @@ paths:
   /work_items/{work_item_id}/dispatch:
     post:
       summary: Dispatch a work item (run token)
-      description: A remaining watching watch returns 202 with the retained work item and its dispatch reason. No execution or human request is created for this automatic wait. Once every watch has finished, admission starts the next run to verify the outcome using the recorded observations. External labels never verify an outcome.
+      description: >-
+        API dispatch uses the work item's existing authorization under an initiative pause. It cannot
+        grant that authorization. A pause refusal creates no Inbox request. A remaining watching watch
+        returns 202 with the retained work item and its dispatch reason. No execution or human request
+        is created for this automatic wait. Once every watch has finished, admission starts the next run
+        to verify the outcome using the recorded observations. External labels never verify an outcome.
       operationId: dispatchWorkItem
       requestBody:
         required: true
@@ -8938,10 +9375,6 @@ paths:
             Filter query supporting the typed qualifiers listed in `x-qualifiers` (each with its type, values and description).
             Unknown qualifiers or invalid values return 422.
           x-qualifiers:
-            - key: state
-              type: enum
-              values: ["proposed","accepted","rejected"]
-              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
             - key: since
               type: date
               description: "A date (YYYY-MM-DD) on created_at, with >=, >, <=, < or a range `from..to`."
@@ -9005,7 +9438,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     post:
-      summary: Propose a revision of a product document (run token)
+      summary: Write a revision of a product document (run token)
       operationId: createProductDocumentRevision
       x-model: DocumentRevision
       security:
@@ -9037,11 +9470,17 @@ paths:
           key: document_id
       responses:
         "201":
-          description: The proposed revision
+          description: The committed current revision
           content:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The document change awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
         "401":
           description: Unauthorized
           content:
@@ -9062,69 +9501,6 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Invalid input
-          content:
-            application/vnd.api+json:
-              schema:
-                $ref: "#/components/schemas/ErrorDocument"
-  /products/{product_id}/documents/{document_id}/revisions/{revision_id}/application:
-    post:
-      summary: Apply (accept) a proposed revision of a product document; it becomes the accepted revision
-      operationId: createDocumentRevisionApplication
-      security:
-        - apiToken: []
-      parameters:
-        - name: product_id
-          in: path
-          required: true
-          description: Record id or key.
-          schema:
-            type: string
-        - name: document_id
-          in: path
-          required: true
-          description: Product document id.
-          schema:
-            type: string
-        - name: revision_id
-          in: path
-          required: true
-          description: Revision id.
-          schema:
-            type: string
-      x-run-targets:
-        - model: Product
-          in: path
-          key: product_id
-        - model: ProductDocument
-          in: path
-          key: document_id
-      responses:
-        "200":
-          description: The applied revision
-          content:
-            application/vnd.api+json:
-              schema:
-                $ref: "#/components/schemas/DocumentRevisionResourceDocument"
-        "401":
-          description: Unauthorized
-          content:
-            application/vnd.api+json:
-              schema:
-                $ref: "#/components/schemas/ErrorDocument"
-        "403":
-          description: Operation not granted to the run, or the record is outside the run's node
-          content:
-            application/vnd.api+json:
-              schema:
-                $ref: "#/components/schemas/ErrorDocument"
-        "404":
-          description: Record not found
-          content:
-            application/vnd.api+json:
-              schema:
-                $ref: "#/components/schemas/ErrorDocument"
-        "422":
-          description: The revision was rejected and cannot be applied, or invalid input
           content:
             application/vnd.api+json:
               schema:
@@ -9453,7 +9829,7 @@ paths:
     post:
       summary: Create a product document and propose its first revision (run token)
       operationId: createProductDocument
-      description: Enabled autonomat-revisions capabilities are provisioned with this operation. Normal run grants and account and node authorization remain required. Creation proposes revision 1 without accepting content.
+      description: An eligible run with write authority commits revision 1 immediately. If the configured operation requires approval, the initial text waits in Inbox and the document is created on approval.
       x-model: DocumentRevision
       security:
         - apiToken: []
@@ -9476,11 +9852,17 @@ paths:
           key: product_id
       responses:
         "201":
-          description: The proposed revision
+          description: The committed current revision
           content:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The document change awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
         "401":
           description: Unauthorized
           content:
@@ -9506,7 +9888,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     get:
-      summary: List a product's documents, each with its accepted revision
+      summary: List a product's documents and their current texts
       operationId: listProductDocuments
       security:
         - apiToken: []
@@ -9528,10 +9910,6 @@ paths:
               type: enum
               values: ["icp","prd","drd","trd","mrd","rrd","ord","lrd","strategy"]
               description: "One of the listed values; several values separated by commas match any of them, `-kind:` negates."
-            - key: state
-              type: enum
-              values: ["missing","needs_review","accepted","draft"]
-              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
             - key: since
               type: date
               description: "A date (YYYY-MM-DD) on updated_at, with >=, >, <=, < or a range `from..to`."
@@ -9593,7 +9971,7 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
   /products/{product_id}/documents/{id}:
     get:
-      summary: Get a product document with its accepted revision
+      summary: Get a product document with its current text
       operationId: getProductDocument
       security:
         - apiToken: []
@@ -9713,13 +10091,9 @@ paths:
           in: query
           required: false
           description: |
-            Typed filter query. Example: `state:accepted sort:number-desc`.
+            Typed filter query. Example: `sort:number-desc`.
             Unknown qualifiers or values return 422.
           x-qualifiers:
-            - key: state
-              type: enum
-              values: ["proposed","accepted","rejected"]
-              description: "One of the listed values; several values separated by commas match any of them, `-state:` negates."
             - key: sort
               type: sort
               values: ["number-asc","number-desc"]
@@ -9777,7 +10151,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     post:
-      summary: Propose a revision of a standard (run token)
+      summary: Write a revision of a standard (run token)
       operationId: createStandardRevision
       x-model: DocumentRevision
       security:
@@ -9801,11 +10175,17 @@ paths:
           key: standard_id
       responses:
         "201":
-          description: The proposed revision
+          description: The committed current revision
           content:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The document change awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
         "401":
           description: Unauthorized
           content:
@@ -9830,36 +10210,40 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
-  /standards/{standard_id}/revisions/{revision_id}/application:
-    post:
-      summary: Apply (accept) a proposed revision of a standard; it becomes the accepted revision
-      operationId: createStandardRevisionApplication
+  /initiatives/{initiative_id}/revisions:
+    get:
+      summary: List initiative revision history
+      operationId: listInitiativeRevisions
       security:
         - apiToken: []
       parameters:
-        - name: standard_id
+        - name: initiative_id
           in: path
           required: true
-          description: Record id or key.
           schema:
             type: string
-        - name: revision_id
-          in: path
-          required: true
-          description: Revision id.
+        - name: page[number]
+          in: query
           schema:
-            type: string
+            type: integer
+            minimum: 1
+        - name: page[size]
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
       x-run-targets:
-        - model: Standard
+        - model: Initiative
           in: path
-          key: standard_id
+          key: initiative_id
       responses:
         "200":
-          description: The applied revision
+          description: Revision history
           content:
             application/vnd.api+json:
               schema:
-                $ref: "#/components/schemas/StandardRevisionDocument"
+                $ref: "#/components/schemas/DocumentRevisionCollectionDocument"
         "401":
           description: Unauthorized
           content:
@@ -9867,7 +10251,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
         "403":
-          description: Operation not granted to the run, or the record is outside the run's node
+          description: Outside run scope or operation unavailable
           content:
             application/vnd.api+json:
               schema:
@@ -9879,7 +10263,520 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
-          description: The revision was rejected and cannot be applied, or invalid input
+          description: Invalid pagination
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Write a revision of the initiative (run token)
+      operationId: createInitiativeRevision
+      x-model: DocumentRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: initiative_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunRevisionCreateDocument"
+      x-run-targets:
+        - model: Initiative
+          in: path
+          key: initiative_id
+      responses:
+        "201":
+          description: The committed current revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The document change awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /initiatives/{initiative_id}/revisions/{id}:
+    get:
+      summary: Read an initiative revision
+      operationId: getInitiativeRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: initiative_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: Initiative
+          in: path
+          key: initiative_id
+      responses:
+        "200":
+          description: Full revision text and attribution
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevisionResourceDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /architecture_decisions/{architecture_decision_id}/revisions:
+    get:
+      summary: List architecture decision revision history
+      operationId: listArchitectureDecisionRevisions
+      security:
+        - apiToken: []
+      parameters:
+        - name: architecture_decision_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page[number]
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: page[size]
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      x-run-targets:
+        - model: ArchitectureDecision
+          in: path
+          key: architecture_decision_id
+      responses:
+        "200":
+          description: Revision history
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevisionCollectionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid pagination
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Write a revision of the architecture decision (run token)
+      operationId: createArchitectureDecisionRevision
+      x-model: DocumentRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: architecture_decision_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunRevisionCreateDocument"
+      x-run-targets:
+        - model: ArchitectureDecision
+          in: path
+          key: architecture_decision_id
+      responses:
+        "201":
+          description: The committed current revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The document change awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /architecture_decisions/{architecture_decision_id}/revisions/{id}:
+    get:
+      summary: Read an architecture decision revision
+      operationId: getArchitectureDecisionRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: architecture_decision_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: ArchitectureDecision
+          in: path
+          key: architecture_decision_id
+      responses:
+        "200":
+          description: Full revision text and attribution
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevisionResourceDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /product_documents/{document_id}/revisions:
+    get:
+      summary: List account strategy revision history
+      operationId: listStrategyRevisions
+      security:
+        - apiToken: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page[number]
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: page[size]
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      x-run-targets:
+        - model: ProductDocument
+          in: path
+          key: document_id
+      responses:
+        "200":
+          description: Revision history
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevisionCollectionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid pagination
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    post:
+      summary: Write a revision of the account strategy (run token)
+      operationId: createStrategyRevision
+      x-model: DocumentRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/RunRevisionCreateDocument"
+      x-run-targets:
+        - model: ProductDocument
+          in: path
+          key: document_id
+      responses:
+        "201":
+          description: The committed current revision
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The document change awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid input
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /product_documents/{document_id}/revisions/{id}:
+    get:
+      summary: Read an account strategy revision
+      operationId: getStrategyRevision
+      security:
+        - apiToken: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: ProductDocument
+          in: path
+          key: document_id
+      responses:
+        "200":
+          description: Full revision text and attribution
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevisionResourceDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /architecture_decisions/{id}:
+    get:
+      summary: Read an architecture decision
+      operationId: getArchitectureDecision
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: ArchitectureDecision
+          in: path
+          key: id
+      responses:
+        "200":
+          description: Current document text
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ArchitectureDecisionDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /product_documents/{id}:
+    get:
+      summary: Read an account strategy document
+      operationId: getStrategyDocument
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      x-run-targets:
+        - model: ProductDocument
+          in: path
+          key: id
+      responses:
+        "200":
+          description: Current document text
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ProductDocumentResourceDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Outside run scope or operation unavailable
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
           content:
             application/vnd.api+json:
               schema:
@@ -9964,7 +10861,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
     post:
-      summary: Create a standard; a body files a proposed revision to apply
+      summary: Create a standard, with optional initial text submitted by a run
       operationId: createStandard
       x-model: Standard
       security:
@@ -9977,11 +10874,19 @@ paths:
               $ref: "#/components/schemas/StandardCreateDocument"
       responses:
         "201":
-          description: Standard created
+          description: Standard created, with its current text when supplied
           content:
             application/vnd.api+json:
               schema:
-                $ref: "#/components/schemas/StandardDocument"
+                oneOf:
+                  - $ref: "#/components/schemas/StandardDocument"
+                  - $ref: "#/components/schemas/RunRevisionDocument"
+        "202":
+          description: The initial text awaits Inbox approval
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/PendingCallDocument"
         "401":
           description: Unauthorized
           content:
@@ -10002,7 +10907,7 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
   /standards/{id}:
     get:
-      summary: Get a standard with its accepted revision and verification
+      summary: Get a standard with its current text and verification
       operationId: getStandard
       security:
         - apiToken: []
@@ -10038,6 +10943,61 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "404":
           description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+    patch:
+      summary: Replace a procedure's ordered standards list
+      description: Send an empty array to clear the list. Omit standard_keys to leave the list in place. Standard text is written through revisions.
+      operationId: updateStandard
+      x-model: Standard
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: "#/components/schemas/StandardUpdateDocument"
+      x-run-targets:
+        - model: Standard
+          in: path
+          key: id
+      responses:
+        "200":
+          description: Updated standard
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/StandardDocument"
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Operation not granted to the run, or the run is outside the account root
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Record not found
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: Invalid standards list
           content:
             application/vnd.api+json:
               schema:
@@ -10931,8 +11891,9 @@ paths:
       summary: Read the execution payload of an admitted run
       operationId: getRunExecution
       description: >-
-        Read-only, including credential rereads. A run token requires the execution read grant and may read only its own run.
+        A run token requires the execution read grant and may read only its own run.
         A valid current-attempt token is returned without renewal. Use POST /runs/{run_id}/token to renew it.
+        If the stored procedure becomes invalid before delivery, the live run records the cause and the request returns 422.
       security:
         - apiToken: []
       parameters:
@@ -10972,6 +11933,12 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/ErrorDocument"
+        "422":
+          description: The live run's stored procedure is unavailable or cannot be rendered.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
     post:
       summary: Admit a queued run and return its execution payload
       operationId: createRunExecution
@@ -10979,6 +11946,8 @@ paths:
         Requires an account API token and an empty request body. Repetition returns the admitted document without
         consuming approvals again or renewing a token. A strictly higher native retry count requests a new attempt
         on the same run. An allowed attempt rotates the token once. Refused attempts remain refused when repeated.
+        An initiative pause can hold a new attempt before it is recorded. The work item can continue once an
+        operator authorizes it or the initiative resumes.
       security:
         - apiToken: []
       parameters:
@@ -11076,9 +12045,9 @@ paths:
                           type: string
                           minLength: 1
                           pattern: '\S'
-                          description: Nonblank final answer text without NUL characters.
+                          description: Nonblank final answer text without NUL characters. For a verify run whose item remains unverified, describe what is still required.
                         item_outcome:
-                          description: Required for work runs and accepted only for work runs. Reports progress without verifying the work.
+                          description: Required for work and preparation runs. Omit it for verify runs.
                           allOf:
                             - $ref: "#/components/schemas/ItemOutcomeInput"
       responses:
@@ -11337,14 +12306,15 @@ paths:
       description: >-
         For a schedule run, authenticate with the webhook token and send a JSON:API document
         with `data.type` set to `run-results` and `data.id` set to the execution ID.
-        Every report requires a `status` and a meaningful `description` explaining the transition.
-        Terminal reports require a nonblank `summary` describing the result.
+        Every report requires a `status`. A running report also requires a meaningful `description`.
+        Terminal results store the canonical status and cause. Legacy terminal descriptions and summaries are accepted for compatibility.
         A terminal report uses the answer and work item outcome already accepted by `createRunResult`.
         It may omit both fields. Valid legacy result fields are used when the run has no accepted submission.
+        For a verify run, a terminal result without a verified transition returns the item to preparation
+        and preserves the answer as its next action. At the work-run limit the item fails and retains that note.
         For success, send `succeeded` (legacy aliases `finished` and `completed` also work)
         and optionally supply the schedule output as a string in `answer`.
-        For failure, send `failed`, explain the cause in `summary`, and optionally provide
-        `failure_reason` or `item_outcome.note` for the stored reason.
+        For failure, send `failed` and optionally provide `failure_reason` or `item_outcome.note` for the stored cause.
         Omit `item_outcome` on success. When supplied, it is validated and retained on terminal reports
         without applying a work-item transition. Its `state` of `failed`, `interrupted` or `stopped`
         normalizes a reported success to failure.
@@ -11357,8 +12327,8 @@ paths:
         The failed delivery activity is recorded and schedule advancement is requested, freeing capacity
         for waiting executions or advancing a completed step. Other unsent deliveries return 422.
         Terminal runs return 409, including unsent runs and duplicate failed deliveries.
-        A delivery whose request body is identical to the last delivery accepted for a running run returns 200
-        and is not applied again.
+        A delivery whose request body matches any report already accepted for a running run returns 200.
+        Each accepted report is applied once.
       operationId: deliverAgentRunResults
       security:
         - webhookToken: []
@@ -11397,7 +12367,7 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: >-
-            Validation error, missing or invalid description, missing terminal summary, unknown status (not one of running, succeeded, finished, completed, failed, cancelled), or run not
+            Validation error, missing or invalid progress description, unknown status (not one of running, succeeded, finished, completed, failed, cancelled), or run not
             dispatched (except a failed delivery for a queued run without sent_at).
           content:
             application/vnd.api+json:
