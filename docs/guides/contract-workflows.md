@@ -198,6 +198,11 @@ request belongs inside an option. `missing_parts` lists required fields that
 are absent or blank and is empty for a valid escalation. Other Inbox items
 use the applicable account or workable permission requirements.
 
+Use `inbox-requirements get` for the account's configured requirements by
+category for operator-owned pending items. Read `required_parts` on the
+individual Inbox item to determine which fields apply to an escalation or a
+workable permission item.
+
 `inbox-items update` uses its own run-scoped schema. It accepts partial updates,
 such as `--evidence 'Pilot checks passed'`. Its `--options` takes entries with a
 text `consequence`, such as `[{"key":"go","label":"Proceed","consequence":"Run the pilot"}]`.
@@ -250,8 +255,8 @@ Inspect the generated reference for credential fields and the new
 
 Use an authorized account context for capability configuration and channel
 lookup. Supply `--name` to set the capability's display name. Creation defaults
-to the humanized key. On update, omission preserves the name and a supplied
-name must be nonblank.
+to the humanized key when the name is omitted or blank. On update, omission
+preserves the name and a supplied name must be nonblank.
 
 Set `review_on` under `--watch_configuration` to request immediate product
 review. Key each rule by the signal item's external kind and specify either
@@ -267,6 +272,10 @@ autonomatctl --context "$ACCOUNT_CONTEXT" notification-channels get "$CHANNEL_ID
 The channel lookup returns an active channel in the account by ID or key.
 Read `data.attributes.name` for the display name. The API uses the humanized
 key if the saved name is blank. Run tokens receive HTTP 403.
+
+In responses from `activity-events list` and `activity-events get`, the API
+adds the associated tool or channel display name to the activity `summary`
+when the name is available and absent from the recorded text.
 
 ## Watch a signal source
 
