@@ -70,7 +70,7 @@ var newOps = []struct {
 	{"archivePolicy", "policies delete", "DELETE", "/policies/{id}", "", nil, nil, []string{"a1"}},
 	{"listProducts", "products list", "GET", "/products", "", nil, nil, nil},
 	{"getProduct", "products get", "GET", "/products/{id}", "", nil, nil, []string{"a1"}},
-	{"updateProduct", "products update", "PATCH", "/products/{id}", "products", nil, []string{"owner_agent_id", "name", "purpose", "next_action", "daily_budget", "key_metrics", "excluded_standard_keys", "external_refs", "parent_id"}, []string{"a1"}},
+	{"updateProduct", "products update", "PATCH", "/products/{id}", "products", nil, []string{"owner_agent_id", "name", "purpose", "next_action", "daily_budget", "key_metrics", "excluded_standard_keys", "additional_standard_keys", "external_refs", "parent_id"}, []string{"a1"}},
 	{"archiveProduct", "products delete", "DELETE", "/products/{id}", "", nil, nil, []string{"a1"}},
 	{"listProductDocuments", "products documents list", "GET", "/products/{product_id}/documents", "", nil, nil, []string{"a1"}},
 	{"listDocumentRevisions", "products documents revisions list", "GET", "/products/{product_id}/documents/{document_id}/revisions", "", nil, nil, []string{"a1", "a2"}},
@@ -106,6 +106,7 @@ var newOps = []struct {
 	{"getSignalSource", "signal-sources get", "GET", "/signal_sources/{id}", "", nil, nil, []string{"source1"}},
 	{"createSignalSource", "signal-sources create", "POST", "/signal_sources", "signal_sources", []string{"name", "kind"}, []string{"name", "kind", "summary", "reconciliation_cursor", "settings", "webhook_mode", "webhook_signature_header", "webhook_digest", "webhook_signature_prefix", "webhook_event_id_field", "webhook_secret"}, nil},
 	{"updateSignalSource", "signal-sources update", "PATCH", "/signal_sources/{id}", "signal_sources", nil, []string{"name", "kind", "summary", "reconciliation_cursor", "settings", "webhook_mode", "webhook_signature_header", "webhook_digest", "webhook_signature_prefix", "webhook_event_id_field", "webhook_secret"}, []string{"source1"}},
+	{"getNotificationChannel", "notification-channels get", "GET", "/notification_channels/{id}", "", nil, nil, []string{"pilot-alerts"}},
 }
 
 // TestNewContractOperations pins command names, fields and wire requests for
@@ -163,8 +164,14 @@ func TestNewContractOperations(t *testing.T) {
 				for _, f := range op.Body.Fields {
 					a, v := sample(f.Name, f.Type, f.ItemType, f.Enum)
 					if f.Name == "settings" && (tc.id == "createSignalSource" || tc.id == "updateSignalSource") {
-						const settings = `{"event_type_field":"type","message_mapping":{"deployment.updated":{"item":{"kind":"deployment","field":"deployment.id"},"container":{"kind":"project","field":"project.id"},"account":{"kind":"organization","field":"org.id"},"state":"deployment.state","version":"deployment.version"},"project.created":{"item":{"kind":"project","field":"project.id"}}}}`
+						const settings = `{"event_type_field":"type","message_mapping":{"deployment.updated":{"item":{"kind":"deployment","field":"deployment.id"},"container":{"kind":"project","field":"project.id"},"account":{"kind":"organization","field":"org.id"},"state":"deployment.state","version":"deployment.version","require":[{"paths":["deployment.environment","environment"],"equals":"pilot"},{"paths":["labels[*]"],"equals":"review"}]},"project.created":{"item":{"kind":"project","field":"project.id"}}}}`
 						a, v = []string{"--settings", settings}, decode(t, []byte(settings))
+					}
+					switch f.Name {
+					case "additional_standard_keys":
+						a, v = []string{"--additional_standard_keys", `["review","deploy"]`}, []any{"review", "deploy"}
+					case "excluded_standard_keys":
+						a, v = []string{"--excluded_standard_keys", `["legacy"]`}, []any{"legacy"}
 					}
 					args = append(args, a...)
 					want[f.Name] = v
@@ -213,6 +220,69 @@ func TestNewContractOperations(t *testing.T) {
 			}
 			if attrs, _ := data["attributes"].(map[string]any); !reflect.DeepEqual(attrs, want) && len(want) > 0 {
 				t.Errorf("attributes = %v, want %v", attrs, want)
+			}
+		})
+	}
+}
+
+func TestProductAdditionalStandardKeysClearAndOmit(t *testing.T) {
+	sp := pinnedSpec(t)
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		attrs map[string]any
+	}{
+		{"clear", []string{"--additional_standard_keys", "[]"}, map[string]any{"additional_standard_keys": []any{}}},
+		{"omit", []string{"--purpose", "Pilot deployments"}, map[string]any{"purpose": "Pilot deployments"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newStub(t)
+			args := append([]string{"products", "update", "pilot"}, tc.flags...)
+			if _, _, err := run(t, sp, srv.URL, args...); err != nil {
+				t.Fatal(err)
+			}
+			reqs := srv.requests()
+			if len(reqs) != 1 || reqs[0].Method != "PATCH" || reqs[0].Path != "/products/pilot" {
+				t.Fatalf("requests = %+v, want PATCH /products/pilot", reqs)
+			}
+			data := decode(t, reqs[0].Body)
+			want := map[string]any{"data": map[string]any{"type": "products", "attributes": tc.attrs}}
+			if !reflect.DeepEqual(data, want) {
+				t.Errorf("body = %v, want %v", data, want)
+			}
+		})
+	}
+}
+
+func TestCapabilityNameAndReviewRules(t *testing.T) {
+	sp := pinnedSpec(t)
+	const configuration = `{"levels":["item"],"kinds":{"deployment":"item","release":"item"},"review_on":{"deployment":{"states":["succeeded","failed"]},"release":{"version":true}}}`
+	for _, tc := range []struct {
+		args   []string
+		method string
+		path   string
+	}{
+		{[]string{"capabilities", "create"}, "POST", "/capabilities"},
+		{[]string{"capabilities", "update", "deploy"}, "PATCH", "/capabilities/deploy"},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			srv := newStub(t)
+			args := append(tc.args, "--key", "deploy", "--name", "Pilot deployments", "--watch_configuration", configuration)
+			if _, _, err := run(t, sp, srv.URL, args...); err != nil {
+				t.Fatal(err)
+			}
+			reqs := srv.requests()
+			if len(reqs) != 1 || reqs[0].Method != tc.method || reqs[0].Path != tc.path {
+				t.Fatalf("requests = %+v, want %s %s", reqs, tc.method, tc.path)
+			}
+			want := map[string]any{"data": map[string]any{
+				"type": "capabilities",
+				"attributes": map[string]any{
+					"key": "deploy", "name": "Pilot deployments", "watch_configuration": decode(t, []byte(configuration)),
+				},
+			}}
+			if got := decode(t, reqs[0].Body); !reflect.DeepEqual(got, want) {
+				t.Errorf("body = %v, want %v", got, want)
 			}
 		})
 	}

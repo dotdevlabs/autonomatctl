@@ -35,7 +35,7 @@ func TestLoadPinned(t *testing.T) {
 	if s.Title != "Autonomat API" || s.Version == "" || s.OpenAPI == "" {
 		t.Fatalf("bad header: %+v", s)
 	}
-	if len(s.Operations) != 144 {
+	if len(s.Operations) != 145 {
 		t.Fatalf("operations = %d", len(s.Operations))
 	}
 	for _, id := range []string{"createInboxItemAnswer", "createInboxItemEscalation", "createRunExecution", "createRunResult", "createSignalSource", "createWatch", "createWatchCancellation", "deliverSignal", "getSignalSource", "getWatch", "listWatches", "updateSignalSource", "withdrawInboxItem"} {

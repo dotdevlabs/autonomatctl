@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "0.0.35"
+  version: "0.0.42"
   x-version-stage: development
 components:
   securitySchemes:
@@ -28,20 +28,53 @@ components:
       example: task:2433
     SignalSourceSettings:
       type: object
-      description: Set event_type_field to the output path containing the exact event type. Each message_mapping entry requires item and can define container and account, each with kind and field. Entries may also map event_id, state, version, observed_at, url and product_id to output paths.
+      description: >-
+        Set event_type_field to the output path containing the exact event type. Each message_mapping
+        entry requires item and can define container and account, each with kind and field. Entries
+        may also map event_id, state, version, observed_at, url and product_id to output paths.
+        An entry can require all of its payload conditions to match before a signal is recorded.
+        These conditions also apply to reconciled events.
       additionalProperties:
         $ref: "#/components/schemas/JsonValue"
+      properties:
+        message_mapping:
+          type: object
+          description: >-
+            Entries keyed by event type may specify a require array. Each condition must find an exact
+            string match at one of its paths. Use `[*]` to visit every element of an array.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              $ref: "#/components/schemas/JsonValue"
+            properties:
+              require:
+                type: array
+                description: All conditions must match. An empty array imposes no conditions.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [paths, equals]
+                  properties:
+                    paths:
+                      type: array
+                      minItems: 1
+                      items: {type: string}
+                      description: Output paths to check. Use `[*]` to visit each element of an array.
+                    equals:
+                      type: string
+                      description: At least one value found by the paths must equal this string exactly.
       example:
-        tool: loopcontrol
         event_type_field: event_type
         message_mapping:
-          task.stage_changed:
-            item: {kind: task, field: task_id}
-            container: {kind: project, field: project_id}
-            state: new_stage
-            version: stage_version
-          project.created:
-            item: {kind: project, field: project_id}
+          push:
+            item: {kind: contract, field: repository.name}
+            version: after
+            event_id: after
+            require:
+              - paths: [ref]
+                equals: refs/heads/main
+              - paths: ["commits[*].added[*]", "commits[*].modified[*]"]
+                equals: docs/api_spec.yaml
     SignalSourceCreateDocument:
       type: object
       description: A source receives a recurring poll when it has a configured event listing or a linked watching watch. Webhook-only sources without linked watches have no polling schedule.
@@ -1411,10 +1444,11 @@ components:
           nullable: true
           description: >-
             Why the work did not finish. The note cannot contain a NUL character.
-            Failed, interrupted and stopped outcomes retain the note
+            Except for a successful Prepare run awaiting an operator answer, failed, interrupted and stopped outcomes retain the note
             in failed transition metadata (trimmed to 1000 characters and scrubbed of known credentials), exposed as derived failure_reason and shown
             in the conversation ("The agent run failed: <note>", linked to the execution) and on the
-            execution page. Without a note an answer run shows the generic "The agent run failed."
+            execution page. A Prepare run awaiting an answer retains its interrupted outcome and note on the run without a failure reason.
+            Without a note an answer run shows the generic "The agent run failed."
     CredentialRejectionInput:
       type: object
       additionalProperties: false
@@ -1489,7 +1523,7 @@ components:
           type: string
           enum: [running, succeeded, failed, cancelled, finished, completed]
           description: >-
-            Progress state (`running`) or terminal state (`succeeded`, `failed`, `cancelled`). Legacy `finished` and `completed` inputs map to `succeeded`; response state is always canonical. Any other value is a 422
+            Progress state (`running`) or terminal state (`succeeded`, `failed`, `cancelled`). Legacy `finished` and `completed` inputs map to `succeeded`; response state is always canonical. An interrupted Prepare run that reported success and has its own open operator Inbox question is acknowledged as `succeeded`. Any other status value is a 422
             with `source.pointer` `/data/attributes/status`. A delivery for a run that is already terminal is a 409.
         started_at:
           type: string
@@ -2002,6 +2036,8 @@ components:
             preparation unless the work-run limit has been reached.
             Prepare uses the embedded work item and assignment goal. Complete the outcome definition,
             request operator input when needed, and report item_outcome.state as completed when ready.
+            If the run creates or updates an open operator Inbox question on its work item, report success
+            with item_outcome.state set to interrupted while awaiting the answer. The work item remains unprepared.
             Answer uses embedded conversation context or getConversation followed by listConversationMessages,
             paging to match the exact message ID. Use createRunResult when granted, then deliverAgentRunResults,
             which also supports delivering the answer directly.
@@ -3685,6 +3721,25 @@ components:
         kinds:
           type: object
           additionalProperties: {type: string, enum: [global, account, project, item]}
+        review_on:
+          type: object
+          description: >-
+            Immediate product review rules keyed by the signal item's external kind.
+            The API requires each key to match `^[A-Za-z0-9_][A-Za-z0-9_.-]*$`.
+          additionalProperties:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required: [states]
+                properties:
+                  states:
+                    type: array
+                    items: {type: string}
+              - type: object
+                additionalProperties: false
+                required: [version]
+                properties:
+                  version: {type: boolean, enum: [true]}
     ToolApprovalTemplates:
       type: object
       description: Plain-text Mustache templates keyed by contract operation ID or a configured CLI subcommand. Variables are redacted named call arguments. Without a usable template, CLI approvals show named argument rows.
@@ -3694,9 +3749,12 @@ components:
     CapabilityResponseAttributes:
       type: object
       additionalProperties: false
-      required: [key, description, interface, command, allowed_commands, invocation, credential_mapping, creates_watch, external_id_path, external_url_path, read_operation, states, signal_source_id, cost_path, inputs, created_at, updated_at]
+      required: [key, name, description, interface, command, allowed_commands, invocation, credential_mapping, creates_watch, external_id_path, external_url_path, read_operation, states, signal_source_id, cost_path, inputs, created_at, updated_at]
       description: Complete configured tool metadata without resolved credentials.
       properties:
+        name:
+          type: string
+          description: Saved display name of the tool. A null, empty or whitespace-only stored name reads as the humanized key.
         approval_templates:
           $ref: "#/components/schemas/ToolApprovalTemplates"
         watch_configuration:
@@ -3772,6 +3830,11 @@ components:
       required:
       - key
       properties:
+        name:
+          type: string
+          nullable: true
+          description: Display name of the tool. On creation, omission, null or whitespace stores the humanized key. On update, omission preserves the stored name and null or blank values are rejected.
+          x-server-default: Humanized key on creation
         approval_templates:
           $ref: "#/components/schemas/ToolApprovalTemplates"
         watch_configuration:
@@ -4659,6 +4722,11 @@ components:
       items:
         type: string
         enum: [title, question, context, options, steps, request, reason, unblocks, evidence, recommendation, continuation, denial_continuation, cost_of_waiting, value_request]
+    InboxItemParts:
+      type: array
+      items:
+        type: string
+        enum: [title, question, context, options, steps, request, reason, unblocks, evidence, recommendation, continuation, denial_continuation, cost_of_waiting, value_request, subject, category, escalation_chain, prepared_result, money_at_stake, automation_plan]
     InboxRequirementsResource:
       type: object
       additionalProperties: false
@@ -5066,9 +5134,20 @@ components:
           nullable: true
           description: The key of the recommended option of a decision.
         required_parts:
-          "$ref": "#/components/schemas/InboxRequiredParts"
+          description: >-
+            Top-level fields required by createInboxItem for an escalation, including
+            automation_plan for permission requests. The escalation reason is inside
+            escalation_chain, and an optional typed value request is inside an option.
+            Other items use the applicable account or workable permission requirements.
+          allOf:
+            - $ref: "#/components/schemas/InboxItemParts"
         missing_parts:
-          "$ref": "#/components/schemas/InboxRequiredParts"
+          description: >-
+            Required parts that are absent or blank. For escalations, this checks the
+            stored createInboxItem fields. A valid escalation has an empty list.
+            Other items are checked against their applicable requirements.
+          allOf:
+            - $ref: "#/components/schemas/InboxItemParts"
         call:
           type: object
           nullable: true
@@ -5372,6 +5451,7 @@ components:
           nullable: true
         summary:
           type: string
+          description: Recorded activity text, with the associated tool or channel display name added when available and absent from the text.
         result:
           type: string
           nullable: true
@@ -5521,7 +5601,7 @@ components:
     ProductResourceAttributes:
       type: object
       additionalProperties: false
-      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, excluded_standard_keys, external_refs, parent_id, created_at, updated_at]
+      required: [name, key, purpose, next_action, stage, state, health_state, health_evidence, health_checked_at, first_dollar_in_at, last_activity_at, daily_budget, key_metrics, excluded_standard_keys, additional_standard_keys, external_refs, parent_id, created_at, updated_at]
       properties:
         owner_agent_id:
           type: string
@@ -5569,6 +5649,8 @@ components:
             $ref: "#/components/schemas/KeyMetric"
         excluded_standard_keys:
           $ref: "#/components/schemas/ProductExcludedStandardKeys"
+        additional_standard_keys:
+          $ref: "#/components/schemas/ProductAdditionalStandardKeys"
         external_refs:
           type: array
           items:
@@ -5584,6 +5666,13 @@ components:
       type: array
       uniqueItems: true
       description: Account standard keys excluded from runs for this product or its work items. New products start with an empty list.
+      items:
+        type: string
+        pattern: '\S'
+    ProductAdditionalStandardKeys:
+      type: array
+      uniqueItems: true
+      description: Ordered keys appended to a nonempty procedure standards list for this product or its directly linked work items. Keys already in the list appear once. Standards must be active and belong to the product's account when submitted. Keys cannot also be excluded. New products start with an empty list.
       items:
         type: string
         pattern: '\S'
@@ -5645,9 +5734,13 @@ components:
           items:
             $ref: "#/components/schemas/KeyMetric"
         excluded_standard_keys:
-          description: Replaces the entire list. Each key must exist in the product's account. Send an empty array to clear it or omit the attribute to preserve it.
+          description: Replaces the entire list. Each key must exist in the product's account and cannot also be additional. Send an empty array to clear it or omit the attribute to preserve it.
           allOf:
             - $ref: "#/components/schemas/ProductExcludedStandardKeys"
+        additional_standard_keys:
+          description: Replaces the entire ordered list. Send an empty array to clear it or omit the attribute to preserve it.
+          allOf:
+            - $ref: "#/components/schemas/ProductAdditionalStandardKeys"
         external_refs:
           type: array
           description: Replaces the product's external references. Each entry has tool, kind and ref as non-blank strings and optionally url and label.
@@ -6714,8 +6807,8 @@ paths:
     get:
       summary: Get the account's inbox requirements
       description: >
-        For each inbox item category, the parts an operator-owned pending item must have. All of it is
-        account data; the same document is `required_parts` on each Inbox item.
+        Account-configured requirements by category for operator-owned pending Inbox items.
+        Escalations and workable permission items use their own requirements.
       operationId: getInboxRequirements
       security:
         - apiToken: []
@@ -12240,7 +12333,8 @@ paths:
         configured literal prefix if present. Supported digests are SHA256, SHA384 and SHA512.
         Send a plain JSON object with a nonblank string or integer in the configured top-level event
         ID field. The source owns the delivery and applies its message mapping to the whole object.
-        Repeated event IDs within a source return the original signal with status 201. Missing or
+        A mapped message excluded by its payload conditions returns an empty 204.
+        Eligible deliveries with repeated event IDs within a source return the original signal with status 201. Missing or
         invalid signatures return 401, missing or inactive sources return 404, and invalid JSON,
         event identities or messages return 422.
       security:
@@ -12282,6 +12376,8 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: "#/components/schemas/SignalDocument"
+        "204":
+          description: Message excluded by the mapping's payload conditions
         "401":
           description: Request refused
           content:
@@ -12315,9 +12411,11 @@ paths:
         For success, send `succeeded` (legacy aliases `finished` and `completed` also work)
         and optionally supply the schedule output as a string in `answer`.
         For failure, send `failed` and optionally provide `failure_reason` or `item_outcome.note` for the stored cause.
-        Omit `item_outcome` on success. When supplied, it is validated and retained on terminal reports
-        without applying a work-item transition. Its `state` of `failed`, `interrupted` or `stopped`
-        normalizes a reported success to failure.
+        When supplied, `item_outcome` is validated and retained on terminal reports. Its `state` of
+        `failed`, `interrupted` or `stopped` normalizes a reported success to failure, except when
+        a Prepare run reports `interrupted` and created or updated a still-open operator Inbox question
+        on its work item. That run is acknowledged as `succeeded`, retains the interrupted outcome and note,
+        and leaves the unprepared work item waiting for the question.
         The acknowledgement returns the execution state and finish time.
 
         Queued runs without sent_at accept only status: failed. The delivery records failed state,
@@ -12578,6 +12676,64 @@ paths:
                 $ref: "#/components/schemas/ErrorDocument"
         "422":
           description: Request body is not a JSON:API document (invalid JSON, or data or data.attributes is not an object)
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+  /notification_channels/{id}:
+    get:
+      summary: Get an active notification channel
+      operationId: getNotificationChannel
+      x-model: NotificationChannel
+      security:
+        - apiToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Record id or key.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notification channel identity and display name
+          content:
+            application/vnd.api+json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [type, id, attributes]
+                    properties:
+                      type: {type: string, enum: [notification-channels]}
+                      id: {type: string}
+                      attributes:
+                        type: object
+                        additionalProperties: false
+                        required: [key, name]
+                        properties:
+                          key: {type: string}
+                          name:
+                            type: string
+                            description: Saved display name, or the humanized key when the stored name is null, empty or whitespace-only.
+        "401":
+          description: Unauthorized
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "403":
+          description: Run tokens cannot read notification channels
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: "#/components/schemas/ErrorDocument"
+        "404":
+          description: Channel is missing, archived or belongs to another account
           content:
             application/vnd.api+json:
               schema:

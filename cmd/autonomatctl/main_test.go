@@ -383,6 +383,23 @@ func TestSignalDeliveryAuthentication(t *testing.T) {
 			t.Errorf("unexpected signed request %+v", got)
 		}
 	}
+	srv.reply = func(*http.Request) (int, string) { return http.StatusNoContent, "" }
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		signature string
+	}{
+		{"bearer", append(args, "--token", "webhook-token"), ""},
+		{"signed", signed, signature},
+	} {
+		t.Run("filtered "+tc.name, func(t *testing.T) {
+			t.Setenv("AUTONOMATCTL_SIGNAL_SIGNATURE", tc.signature)
+			before := srv.count()
+			if out, stderr, code := cli(t, tc.args...); code != 0 || out != "" || srv.count() != before+1 {
+				t.Errorf("filtered delivery exit %d, stdout %q, stderr %q, requests %d", code, out, stderr, srv.count()-before)
+			}
+		})
+	}
 	srv.reply = func(*http.Request) (int, string) {
 		return 401, `{"errors":[{"title":"Credential refused: \u0073` + signature[1:] + `"}]}`
 	}
