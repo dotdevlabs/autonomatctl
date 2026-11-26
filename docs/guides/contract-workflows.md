@@ -3,7 +3,7 @@
 Commands and flags are generated from the embedded Autonomat contract. Use
 `autonomatctl schema` to inspect its version and source commit, and
 `autonomatctl ai --json` for the current command reference, required flags,
-enums and nested JSON schemas. The synchronized contract is version 0.0.35.
+enums and nested JSON schemas. The synchronized contract is version 0.0.42.
 
 `autonomatctl version` reports the embedded contract's `info.version`, along with
 build metadata. Use `autonomatctl version --json` to read the `version` field in
@@ -11,7 +11,7 @@ scripts. The CLI and its `ai --json` reference use this same contract version;
 these inspection commands work offline.
 
 When moving from v9.0.0 or a historical v0.1.0–v0.1.9 installation, follow
-the [reinstall instructions](../release-notice.md) once v0.0.35 is available.
+the [reinstall instructions](../release-notice.md) once v0.0.42 is available.
 The contract retires the `routing-rules`, `work-trackers` and `schedule-runs`
 command groups. Check `autonomatctl ai --json` when updating scripts that used
 these groups.
@@ -49,6 +49,35 @@ HTTP 204 means the result was accepted or the same result had already been
 submitted. The command exits successfully with empty stdout even with
 `--json`. The agent service's terminal report ends the run and uses the stored
 result. A retry with different content returns HTTP 409.
+
+If a Prepare run creates or updates its own still-open operator Inbox question
+on the work item, submit an `interrupted` outcome with a note. When the agent
+service reports success, the API acknowledges the run as `succeeded` and
+retains the interrupted outcome and note. The work item stays unprepared
+while it waits for the operator's answer.
+
+```sh
+AUTONOMATCTL_TOKEN="$PREPARE_RUN_TOKEN" autonomatctl runs result create "$PREPARE_RUN_ID" \
+  --answer 'Waiting for the operator to choose the pilot date.' \
+  --item_outcome '{"state":"interrupted","note":"The start date is still open in the Inbox."}' --json
+```
+
+## Update product standards
+
+Use an authorized account context to replace a product's ordered additional
+standards. The API appends these keys to a nonempty procedure standards list
+for the product or its directly linked work items. Additional keys must be
+active in the product's account and must be distinct from excluded keys.
+
+```sh
+autonomatctl --context "$ACCOUNT_CONTEXT" products update "$PRODUCT_ID" \
+  --additional_standard_keys '["deployment-review","release-check"]' \
+  --excluded_standard_keys '["legacy-check"]' --json
+```
+
+Pass `--additional_standard_keys '[]'` to clear the additional list. Omit the
+flag to preserve it. The excluded list has the same replace, clear and omit
+behavior.
 
 ## Create a product document
 
@@ -162,6 +191,13 @@ autonomatctl inbox-items escalation create "$INBOX_ITEM_ID" --reason 'The pilot 
 autonomatctl inbox-items withdrawal create "$INBOX_ITEM_ID" --description 'Withdraw the duplicate request and continue with the original' --reason 'Duplicate request' --evidence 'The original request is already pending'
 ```
 
+For an escalation, the response's `required_parts` lists the top-level
+creation fields, including `automation_plan` for permission requests. Supply
+the escalation reason in the `escalation_chain` entry. An optional typed value
+request belongs inside an option. `missing_parts` lists required fields that
+are absent or blank and is empty for a valid escalation. Other Inbox items
+use the applicable account or workable permission requirements.
+
 `inbox-items update` uses its own run-scoped schema. It accepts partial updates,
 such as `--evidence 'Pilot checks passed'`. Its `--options` takes entries with a
 text `consequence`, such as `[{"key":"go","label":"Proceed","consequence":"Run the pilot"}]`.
@@ -210,6 +246,28 @@ commands. Requests that previously used `connection_id` now use
 Inspect the generated reference for credential fields and the new
 `model-api-prices` commands before migrating scripts.
 
+## Configure capability review and look up notification channels
+
+Use an authorized account context for capability configuration and channel
+lookup. Supply `--name` to set the capability's display name. Creation defaults
+to the humanized key. On update, omission preserves the name and a supplied
+name must be nonblank.
+
+Set `review_on` under `--watch_configuration` to request immediate product
+review. Key each rule by the signal item's external kind and specify either
+the triggering states or `"version":true` for version changes.
+
+```sh
+autonomatctl --context "$ACCOUNT_CONTEXT" capabilities update "$CAPABILITY_ID" \
+  --key "$CAPABILITY_KEY" --name 'Pilot deployments' \
+  --watch_configuration '{"levels":["item"],"kinds":{"deployment":"item","release":"item"},"review_on":{"deployment":{"states":["succeeded","failed"]},"release":{"version":true}}}' --json
+autonomatctl --context "$ACCOUNT_CONTEXT" notification-channels get "$CHANNEL_ID_OR_KEY" --json
+```
+
+The channel lookup returns an active channel in the account by ID or key.
+Read `data.attributes.name` for the display name. The API uses the humanized
+key if the saved name is blank. Run tokens receive HTTP 403.
+
 ## Watch a signal source
 
 Use an operator context to configure signal sources and manage watches. This
@@ -217,7 +275,9 @@ example links a watch to an Inbox external action and an existing capability.
 Set the source kind and tool for your provider. Use `kind:id` for external IDs.
 The text after the first colon is case-sensitive. Each exact event type has
 its own mapping, with a required `item` and optional `container` and `account`
-kind and field pairs.
+kind and field pairs. A mapping's optional `require` array applies to webhook
+and reconciled messages. Every condition must find an exact string match at
+one or more of its `paths`. Use `[*]` to visit every element of an array.
 
 When creating a signal directly with `signals create`, use an account token
 to set external subject fields. Supply typed IDs in `--subject_external_id`,
@@ -228,7 +288,7 @@ the source mapping supply the kinds.
 ```sh
 autonomatctl signal-sources create --name 'Deployment events' --kind "$SOURCE_KIND" \
   --webhook_mode bearer \
-  --settings '{"tool":"deploy","event_type_field":"type","message_mapping":{"deployment.updated":{"item":{"kind":"deployment","field":"deployment_id"},"container":{"kind":"project","field":"project_id"},"state":"status","version":"version"}}}' --json
+  --settings '{"tool":"deploy","event_type_field":"type","message_mapping":{"deployment.updated":{"item":{"kind":"deployment","field":"deployment_id"},"container":{"kind":"project","field":"project_id"},"state":"status","version":"version","require":[{"paths":["environment","deployment.environment"],"equals":"pilot"}]}}}' --json
 autonomatctl signal-sources get "$SIGNAL_SOURCE_ID" --json
 autonomatctl signal-sources update "$SIGNAL_SOURCE_ID" --summary 'Deployment events for the pilot'
 autonomatctl watches create --owner_type InboxItem --owner_id "$INBOX_ITEM_ID" \
@@ -245,7 +305,7 @@ token and receives the provider message in `data.attributes`.
 
 ```sh
 AUTONOMATCTL_TOKEN="$WEBHOOK_TOKEN" autonomatctl webhooks signal-sources signals create "$SIGNAL_SOURCE_ID" \
-  --body '{"id":"event-42","type":"deployment.updated","deployment_id":"Deploy-42","project_id":"Project-7","status":"succeeded","version":1}' --json
+  --body '{"id":"event-42","type":"deployment.updated","deployment_id":"Deploy-42","project_id":"Project-7","status":"succeeded","version":1,"environment":"pilot"}' --json
 ```
 
 A signed source receives a plain JSON object. Include a nonblank string or an
@@ -259,6 +319,10 @@ original bytes as `application/json` and redacts the signature in dry-run output
 Select the destination using the usual context or `AUTONOMATCTL_BASE_URL`.
 Signed delivery omits the `Authorization` header. For bearer delivery, leave
 both `AUTONOMATCTL_SIGNAL_SIGNATURE` and `--signature-header` unset.
+
+If the payload fails any mapping condition, the API filters the delivery and
+returns HTTP 204. The command exits successfully with empty stdout, including
+with `--json`.
 
 ```sh
 AUTONOMATCTL_SIGNAL_SIGNATURE="$PROVIDER_SIGNATURE" autonomatctl webhooks signal-sources signals create "$SIGNAL_SOURCE_ID" \
