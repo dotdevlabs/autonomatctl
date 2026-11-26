@@ -18,6 +18,11 @@ these groups.
 
 ## Submit a run result
 
+When you use `work-items executions create WORK_ITEM_ID --description TEXT`,
+the API starts preparation for an unprepared item or selects pending
+verification once external watches and deliveries finish. Preparation supplies
+the item's outcome definition before work starts.
+
 Use the target run's own token with a grant for `createRunResult`. Read
 `data.attributes.kind` from the execution response to identify the run kind.
 Submit a nonblank answer while the run is running. For a `verify` run, omit
@@ -53,19 +58,35 @@ With a run token granted access to the product and operation:
 autonomatctl products documents create "$PRODUCT_ID" --kind lrd --body '# LRD: Initial draft' --summary 'Clarify scope' --json
 ```
 
-This creates a document and proposes its first revision through
-`POST /products/{product_id}/documents`. `--kind` and `--body` are required;
-`--summary` is optional. Supported kinds are `icp`, `prd`, `drd`, `trd`, `mrd`,
-`rrd`, `ord` and `lrd`. The request uses the `document-revisions` resource type.
-An account API token cannot perform this operation. To propose another revision
-of an existing document, use `products documents revisions create PRODUCT_ID DOCUMENT_ID`.
+`--kind`, `--body` and `--summary` are required. Supported kinds are `icp`,
+`prd`, `drd`, `trd`, `mrd`, `rrd`, `ord` and `lrd`. The request uses
+the `document-revisions` resource type. An eligible run with write authority
+creates the document and commits revision 1 immediately (HTTP 201). When the
+operation requires approval, HTTP 202 means the text is waiting in Inbox.
+The API creates the document on approval.
 
-Initiative, architecture decision and account strategy revision history is
-available under `initiatives revisions`, `architecture-decisions revisions`
-and `product-documents revisions`. Each group provides `list`, `get` and
-`create`. Use `standards update STANDARD_ID --standard_keys '[]'` to clear a
-procedure's ordered standards list, and `standards revisions create` to propose
-changes to standard text.
+## Read and write revisions
+
+Use `architecture-decisions get ID` or `product-documents get ID` to read the
+current architecture decision or account strategy text. The revision groups
+below provide `list`, `get` and `create`. To write a revision, use a run token
+and supply `--body` and `--summary`.
+
+| Record | Revision write command |
+| --- | --- |
+| Product document | `products documents revisions create PRODUCT_ID DOCUMENT_ID` |
+| Initiative | `initiatives revisions create INITIATIVE_ID` |
+| Architecture decision | `architecture-decisions revisions create DECISION_ID` |
+| Account strategy | `product-documents revisions create DOCUMENT_ID` |
+| Standard | `standards revisions create STANDARD_ID` |
+
+HTTP 201 returns the committed current revision. HTTP 202 means the revision
+awaits Inbox approval. Approval commits the change.
+
+Use `standards update STANDARD_ID --standard_keys '[]'` to clear a procedure's
+ordered standards list. To set the list, pass a JSON array of existing standard
+keys from the same account in the desired order. Omit the flag to preserve the
+list.
 
 ## Save a work item verification check
 
@@ -111,8 +132,11 @@ autonomatctl inbox-items create --request_type question --work_item_id 42 \
 
 Set `ASKING_AGENT_ID` in both examples to the authenticated asking agent's
 numeric ID. To request permission, supply `--request_type permission` and a
-bounded `--automation_plan`. Set `CAPABILITY_ID` to the capability in the
-proposed grant and `PLAN_EXPIRES_AT` to a future RFC 3339 timestamp.
+bounded `--automation_plan`. Its `action` must name a request kind configured
+for the installation. The request kind defines the allowed target, scope and
+bound. The example assumes a `grant` kind that accepts the illustrated
+capability scope and counted bound. Set `CAPABILITY_ID` to the capability in
+the proposed grant and `PLAN_EXPIRES_AT` to a future RFC 3339 timestamp.
 
 ```sh
 autonomatctl inbox-items create --request_type permission --work_item_id 42 \
