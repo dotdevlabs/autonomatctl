@@ -3,7 +3,7 @@
 Commands and flags are generated from the embedded Autonomat contract. Use
 `autonomatctl schema` to inspect its version and source commit, and
 `autonomatctl ai --json` for the current command reference, required flags,
-enums and nested JSON schemas. The synchronized contract is version 0.0.42.
+enums and nested JSON schemas. The synchronized contract is version 0.0.43.
 
 `autonomatctl version` reports the embedded contract's `info.version`, along with
 build metadata. Use `autonomatctl version --json` to read the `version` field in
@@ -11,7 +11,7 @@ scripts. The CLI and its `ai --json` reference use this same contract version;
 these inspection commands work offline.
 
 When moving from v9.0.0 or a historical v0.1.0–v0.1.9 installation, follow
-the [reinstall instructions](../release-notice.md) once v0.0.42 is available.
+the [reinstall instructions](../release-notice.md) once v0.0.43 is available.
 The contract retires the `routing-rules`, `work-trackers` and `schedule-runs`
 command groups. Check `autonomatctl ai --json` when updating scripts that used
 these groups.
@@ -49,6 +49,14 @@ HTTP 204 means the result was accepted or the same result had already been
 submitted. The command exits successfully with empty stdout even with
 `--json`. The agent service's terminal report ends the run and uses the stored
 result. A retry with different content returns HTTP 409.
+
+If the agent service's terminal verification report has neither an accepted
+answer nor a valid legacy answer, the item keeps waiting for verification of
+the same completed work. Waiting-item recovery retries verification until
+technical verification failures for that work reach the effective work-run
+limit. If verification ends with a final answer and no verified transition,
+the item returns to preparation and the answer becomes its next action. At
+the work-run limit, the item fails and retains the answer as its note.
 
 If a Prepare run creates or updates its own still-open operator Inbox question
 on the work item, submit an `interrupted` outcome with a note. When the agent
