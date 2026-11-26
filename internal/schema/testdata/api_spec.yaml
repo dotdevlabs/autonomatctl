@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Autonomat API
-  version: "0.0.42"
+  version: "0.0.43"
   x-version-stage: development
 components:
   securitySchemes:
@@ -12406,8 +12406,11 @@ paths:
         Terminal results store the canonical status and cause. Legacy terminal descriptions and summaries are accepted for compatibility.
         A terminal report uses the answer and work item outcome already accepted by `createRunResult`.
         It may omit both fields. Valid legacy result fields are used when the run has no accepted submission.
-        For a verify run, a terminal result without a verified transition returns the item to preparation
-        and preserves the answer as its next action. At the work-run limit the item fails and retains that note.
+        For a verify run, a final answer without a verified transition returns the item to preparation
+        and becomes its next action. At the work-run limit the item fails and retains that note.
+        A terminal verification without an answer leaves the item waiting for verification of the same completed work.
+        Waiting-item recovery retries verification until the number of technical verification failures for that
+        completed work reaches the effective work-run limit.
         For success, send `succeeded` (legacy aliases `finished` and `completed` also work)
         and optionally supply the schedule output as a string in `answer`.
         For failure, send `failed` and optionally provide `failure_reason` or `item_outcome.note` for the stored cause.
