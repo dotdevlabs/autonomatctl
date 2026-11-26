@@ -3,7 +3,7 @@
 Commands and flags are generated from the embedded Autonomat contract. Use
 `autonomatctl schema` to inspect its version and source commit, and
 `autonomatctl ai --json` for the current command reference, required flags,
-enums and nested JSON schemas. The synchronized contract is version 0.0.21.
+enums and nested JSON schemas. The synchronized contract is version 0.0.35.
 
 `autonomatctl version` reports the embedded contract's `info.version`, along with
 build metadata. Use `autonomatctl version --json` to read the `version` field in
@@ -11,26 +11,33 @@ scripts. The CLI and its `ai --json` reference use this same contract version;
 these inspection commands work offline.
 
 When moving from v9.0.0 or a historical v0.1.0–v0.1.9 installation, follow
-the [reinstall instructions](../release-notice.md) once v0.0.21 is available.
+the [reinstall instructions](../release-notice.md) once v0.0.35 is available.
 The contract retires the `routing-rules`, `work-trackers` and `schedule-runs`
 command groups. Check `autonomatctl ai --json` when updating scripts that used
 these groups.
 
 ## Submit a run result
 
-Use the target run's own token with a grant for `createRunResult`. Submit the
-nonblank answer while the run is running. For a run other than a work run,
-send only the answer.
+When you use `work-items executions create WORK_ITEM_ID --description TEXT`,
+the API starts preparation for an unprepared item or selects pending
+verification once external watches and deliveries finish. Preparation supplies
+the item's outcome definition before work starts.
+
+Use the target run's own token with a grant for `createRunResult`. Read
+`data.attributes.kind` from the execution response to identify the run kind.
+Submit a nonblank answer while the run is running. For a `verify` run, omit
+`--item_outcome` and describe any remaining verification work in the answer.
 
 ```sh
 AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs execution get "$RUN_ID" --json
 AUTONOMATCTL_TOKEN="$RUN_TOKEN" autonomatctl runs result create "$RUN_ID" \
-  --answer 'The review is complete.' --json
+  --answer 'Verification is complete.' --json
 ```
 
-Work runs require `--item_outcome`. Its `state` reports execution progress and
-can be `completed`, `interrupted`, `stopped`, or `failed`. Use `note` to explain
-an unsuccessful outcome. The answer and note cannot contain NUL characters.
+Both `work` and `prepare` runs require `--item_outcome`. Its `state` reports
+execution progress and can be `completed`, `interrupted`, `stopped`, or
+`failed`. Use `note` to explain an unsuccessful outcome. The answer and note
+cannot contain NUL characters.
 
 ```sh
 AUTONOMATCTL_TOKEN="$WORK_RUN_TOKEN" autonomatctl runs result create "$WORK_RUN_ID" \
@@ -51,23 +58,89 @@ With a run token granted access to the product and operation:
 autonomatctl products documents create "$PRODUCT_ID" --kind lrd --body '# LRD: Initial draft' --summary 'Clarify scope' --json
 ```
 
-This creates a document and proposes its first revision through
-`POST /products/{product_id}/documents`. `--kind` and `--body` are required;
-`--summary` is optional. Supported kinds are `icp`, `prd`, `drd`, `trd`, `mrd`,
-`rrd`, `ord` and `lrd`. The request uses the `document-revisions` resource type.
-An account API token cannot perform this operation. To propose another revision
-of an existing document, use `products documents revisions create PRODUCT_ID DOCUMENT_ID`.
+`--kind`, `--body` and `--summary` are required. Supported kinds are `icp`,
+`prd`, `drd`, `trd`, `mrd`, `rrd`, `ord` and `lrd`. The request uses
+the `document-revisions` resource type. An eligible run with write authority
+creates the document and commits revision 1 immediately (HTTP 201). When the
+operation requires approval, HTTP 202 means the text is waiting in Inbox.
+The API creates the document on approval.
 
-## File and answer an inbox escalation
+## Read and write revisions
 
-An asking agent files an escalation to its manager. Set `ASKING_AGENT_ID` to the
-authenticated agent's numeric ID, `CAPABILITY_ID` to the ID of the capability in
-the proposed grant, and `PLAN_EXPIRES_AT` to a future RFC 3339 timestamp. The
-create command uses `--automation_plan` for the proposed change. Remove the
-retired `--automation_assessment` flag from create scripts.
+Use `architecture-decisions get ID` or `product-documents get ID` to read the
+current architecture decision or account strategy text. The revision groups
+below provide `list`, `get` and `create`. To write a revision, use a run token
+and supply `--body` and `--summary`.
+
+| Record | Revision write command |
+| --- | --- |
+| Product document | `products documents revisions create PRODUCT_ID DOCUMENT_ID` |
+| Initiative | `initiatives revisions create INITIATIVE_ID` |
+| Architecture decision | `architecture-decisions revisions create DECISION_ID` |
+| Account strategy | `product-documents revisions create DOCUMENT_ID` |
+| Standard | `standards revisions create STANDARD_ID` |
+
+HTTP 201 returns the committed current revision. HTTP 202 means the revision
+awaits Inbox approval. Approval commits the change.
+
+Use `standards update STANDARD_ID --standard_keys '[]'` to clear a procedure's
+ordered standards list. To set the list, pass a JSON array of existing standard
+keys from the same account in the desired order. Omit the flag to preserve the
+list.
+
+## Save a work item verification check
 
 ```sh
-autonomatctl inbox-items create --subject 'Approve the pilot?' --category decision \
+autonomatctl work-items update "$WORK_ITEM_ID" \
+  --verification_check '{"path":"checks[0].status","expected":"ready"}' --json
+```
+
+The check path supports dot-separated keys and bracketed array indices.
+`expected` accepts any JSON value. Pass `--verification_check null` to clear the
+check, or omit the flag to preserve it.
+
+Save changes to the check in a separate update. To mark the item verified, use
+its running verification execution's token and submit the recorded action ID
+from a successful granted read after the run's last change. The API compares
+the action's structured output at the saved path with the expected value.
+
+```sh
+AUTONOMATCTL_TOKEN="$VERIFY_RUN_TOKEN" autonomatctl work-items update "$WORK_ITEM_ID" \
+  --status verified --description 'The saved readiness check passed.' \
+  --observation_action_id "$ACTION_ID" --json
+```
+
+## File and answer an Inbox escalation
+
+Use `--request_type question` for a decision without an automation plan.
+Question options omit executable calls. The API defaults to `question` when
+the flag is omitted. Work runs may omit `--work_item_id` to use their own item.
+Review runs must name an item in their account and node. Pass a numeric ID as
+`--work_item_id 42` or preserve a JSON string with `--work_item_id '"42"'`.
+
+```sh
+autonomatctl inbox-items create --request_type question --work_item_id 42 \
+  --subject 'Which date should the pilot start?' --category decision \
+  --request '{"action":"choose","target":"pilot schedule","exact_change":"Set the pilot start date","duration":"one week","values":{"first":"Monday","second":"Wednesday"}}' \
+  --escalation_chain "[{\"agent_id\":${ASKING_AGENT_ID},\"reason\":\"The pilot needs a start date\"}]" \
+  --evidence 'The team is available both days' \
+  --options '[{"key":"monday","label":"Monday","consequence":{"continues":"Start Monday","spent":"$0","not_done":"Wednesday start"}},{"key":"wednesday","label":"Wednesday","consequence":{"continues":"Start Wednesday","spent":"$0","not_done":"Monday start"}}]' \
+  --recommendation monday --prepared_result 'Both schedules are drafted' \
+  --unblocks 'Publishing the pilot schedule' \
+  --money_at_stake '{"amount_minor":0,"currency":"USD"}' --json
+```
+
+Set `ASKING_AGENT_ID` in both examples to the authenticated asking agent's
+numeric ID. To request permission, supply `--request_type permission` and a
+bounded `--automation_plan`. Its `action` must name a request kind configured
+for the installation. The request kind defines the allowed target, scope and
+bound. The example assumes a `grant` kind that accepts the illustrated
+capability scope and counted bound. Set `CAPABILITY_ID` to the capability in
+the proposed grant and `PLAN_EXPIRES_AT` to a future RFC 3339 timestamp.
+
+```sh
+autonomatctl inbox-items create --request_type permission --work_item_id 42 \
+  --subject 'Approve the pilot?' --category decision \
   --request '{"action":"enable","target":"pilot","exact_change":"Enable one test project","duration":"one day","values":{"enabled":true}}' \
   --escalation_chain "[{\"agent_id\":${ASKING_AGENT_ID},\"reason\":\"The pilot exceeds my approval limit\"}]" \
   --evidence 'The test suite passed against the pilot configuration' \
@@ -98,20 +171,21 @@ parts the resulting item must retain.
 ## Pending calls
 
 ```sh
-autonomatctl pending-calls create --capability deploy --arguments '{"subcommand":"deploy"}' --reason 'Ship the approved revision' --title 'Deploy release' --replaces "$INBOX_ITEM_ID"
+autonomatctl pending-calls create --capability deploy --arguments '{"subcommand":"deploy"}' \
+  --reason 'Ship the approved revision' --consequence 'Deploy the release to production' \
+  --title 'Deploy release' --replaces_entry "$ENTRY_ID"
 ```
 
-`--title` supplies a nonblank, single-line title when operation metadata is
-unavailable. The CLI permits omission; the server returns 422 if it needs a
-title. Metadata-derived titles take precedence.
+`--consequence` describes what approval will do. Supply a nonblank, single-line
+`--title` for work-bound calls or when operation metadata is unavailable.
 
-`--replaces` is optional and identifies a pending approval call's inbox item.
-The server requires the same account and work item, or the same execution when
-neither item has a work item. Replacement atomically creates a fresh pending
-item and completes the old one, preserving its call and history and linking the
-replacement. Neither call is dispatched by this operation. Invalid, resolved
-or differently owned references return 422. Omit `--replaces` for ordinary
-submission with deduplication.
+Use `--replaces_entry` for an open saved call in the same work item. The API
+retires the old entry and appends the replacement atomically, preserving both.
+The legacy `--replaces` flag names an Inbox item. For a work-bound call, that
+item must identify exactly one open entry in the same work item. For a
+standalone call, it must identify an open call from the same execution. Use
+`--request_id` to distinguish an intentional repeat of an identical work-bound
+call. Resubmitting with the same identity returns the same entry.
 
 ## Execution usage and credential changes
 
